@@ -85,10 +85,10 @@ tinygo version
 cd drvs
 
 # 编译 Modbus RTU 驱动
-tinygo build -o th_modbusrtu.wasm -target=wasi th_modbusrtu.go
+tinygo build -o th_modbusrtu.wasm -target=wasip1 -buildmode=c-shared th_modbusrtu.go
 
 # 编译 Modbus TCP 驱动
-tinygo build -o th_modbustcp.wasm -target=wasi th_modbustcp.go
+tinygo build -o th_modbustcp.wasm -target=wasip1 -buildmode=c-shared th_modbustcp.go
 ```
 
 ## Host Functions 接口
@@ -99,31 +99,36 @@ tinygo build -o th_modbustcp.wasm -target=wasi th_modbustcp.go
 
 | 函数 | 参数 | 返回 | 说明 |
 |------|------|------|------|
-| `tcp_transceive` | wPtr: uint64, wSize: i32, rPtr: uint64, rCap: i32, timeoutMs: i32 | i32 | **写后读** |
+| `tcp_transceive` | wPtr: uint64, wSize: uint64, rPtr: uint64, rCap: uint64, timeoutMs: uint64 | uint64 | **写后读** |
 
-### 辅助函数
+### 输出与日志
 
-| 函数 | 参数 | 返回 | 说明 |
-|------|------|------|------|
-| `output` | ptr: uint64, size: i32 | - | 输出日志到控制台 |
+驱动输出使用 Go PDK 的 `pdk.Output(...)` / `pdk.OutputJSON(...)`，
+日志使用 `pdk.Log(...)`，无需自定义 `output` Host Function。
 
 ### serial_transceive 详解
 
 **推荐使用** `serial_transceive` 替代单独的 read/write，它实现了完整的写后读流程：
 
 ```go
-//go:export serial_transceive
-func serial_transceive(wPtr uint64, wSize int32, rPtr uint64, rCap int32, timeoutMs int32) int32
+//go:wasmimport extism:host/user serial_transceive
+func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
 // 使用示例
 req := buildRequestFrame(1, 0x03, 0, 2)
 resp := make([]byte, 64)
-n := serial_transceive(
-    uint64(uintptr(unsafe.Pointer(&req[0]))), int32(len(req)),
-    uint64(uintptr(unsafe.Pointer(&resp[0]))), int32(len(resp)),
+reqMem := pdk.AllocateBytes(req)
+defer reqMem.Free()
+respMem := pdk.Allocate(len(resp))
+defer respMem.Free()
+n := int(serial_transceive(
+    reqMem.Offset(), uint64(len(req)),
+    respMem.Offset(), uint64(len(resp)),
     300, // 300ms 超时
-)
+))
 if n > 0 {
+    mem := pdk.NewMemory(respMem.Offset(), uint64(n))
+    mem.Load(resp[:n])
     // 处理响应数据
 }
 ```
@@ -137,20 +142,17 @@ package main
 
 import (
 	"encoding/json"
-	"reflect"
-	"unsafe"
+
+	pdk "github.com/extism/go-pdk"
 )
 
 // Host Functions
-//go:export tcp_transceive
-func tcp_transceive(wPtr uint64, wSize int32, rPtr uint64, rCap int32, timeoutMs int32) int32
-
-//go:export output
-func output(ptr uint64, size int32)
+//go:wasmimport extism:host/user tcp_transceive
+func tcp_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
 // 驱动入口函数
-//go:export handle
-func handle() {
+//go:wasmexport handle
+func handle() int32 {
     // 读取配置
     cfg := getConfig()
     
@@ -160,15 +162,14 @@ func handle() {
     // 输出 JSON 结果
     outputJSON(map[string]interface{}{
         "success": true,
-        "data": map[string]interface{}{
-            "points": points,
-        },
+        "points":  points,
     })
+    return 0
 }
 
 // 可选：描述驱动的可写字段
-//go:export describe
-func describe() {
+//go:wasmexport describe
+func describe() int32 {
     outputJSON(map[string]interface{}{
         "success": true,
         "data": map[string]interface{}{
@@ -177,14 +178,14 @@ func describe() {
             },
         },
     })
+    return 0
 }
 
 // 从网关配置中获取参数
 func getConfig() GatewayConfig {
-    // 使用 extism_input_ptr / extism_input_len 获取输入
-    var extism_input_ptr *byte
-    var extism_input_len uint32
-    // ... 解析 JSON 配置
+    // 使用 PDK 读取输入 JSON
+    var envelope struct { Config GatewayConfig `json:"config"` }
+    _ = pdk.InputJSON(&envelope)
     return GatewayConfig{DeviceAddress: 1, FuncName: "read"}
 }
 
@@ -199,8 +200,7 @@ func readDevice(cfg GatewayConfig) []map[string]interface{} {
 // 输出 JSON 字符串
 func outputJSON(v interface{}) {
     b, _ := json.Marshal(v)
-    ptr := uint64(uintptr(unsafe.Pointer(unsafe.StringData(string(b)))))
-    output(ptr, int32(len(b)))
+    pdk.Output(b)
 }
 
 func main() {}
@@ -219,7 +219,7 @@ type GatewayConfig struct {
 }
 ```
 
-网关在调用驱动时自动传递设备配置，驱动从 `extism_input_ptr` 获取。
+网关在调用驱动时自动传递设备配置，驱动通过 `pdk.InputJSON` 获取。
 
 ### 输出格式
 
@@ -228,12 +228,10 @@ type GatewayConfig struct {
 ```json
 {
   "success": true,
-  "data": {
-    "points": [
-      {"field_name": "temperature", "value": 25.3, "rw": "R"},
-      {"field_name": "humidity", "value": 60.5, "rw": "R"}
-    ]
-  }
+  "points": [
+    {"field_name": "temperature", "value": 25.3, "rw": "R"},
+    {"field_name": "humidity", "value": 60.5, "rw": "R"}
+  ]
 }
 ```
 
@@ -244,7 +242,7 @@ type GatewayConfig struct {
   "success": true,
   "data": {
     "field": "temperature",
-    "value": 30.0
+    "value": "30.0"
   }
 }
 ```
@@ -278,15 +276,21 @@ func readAll(devAddr int) ([]map[string]interface{}, bool) {
     // 读取温湿度 (0x0000~0x0001)
     req := buildReadFrame(byte(devAddr), 0x0000, 0x0002)
     resp := make([]byte, 32)
-    n := serial_transceive(
-        uint64(uintptr(unsafe.Pointer(&req[0]))), int32(len(req)),
-        uint64(uintptr(unsafe.Pointer(&resp[0]))), int32(len(resp)),
-        300,
-    )
-    
-    if ps, err := decodeMulti(resp[:n]); err == nil {
-        points = append(points, ps...)
-    }
+    reqMem := pdk.AllocateBytes(req)
+    defer reqMem.Free()
+    respMem := pdk.Allocate(len(resp))
+    defer respMem.Free()
+n := int(serial_transceive(
+    reqMem.Offset(), uint64(len(req)),
+    respMem.Offset(), uint64(len(resp)),
+    300,
+))
+
+mem := pdk.NewMemory(respMem.Offset(), uint64(n))
+mem.Load(resp[:n])
+if ps, err := decodeMulti(resp[:n]); err == nil {
+    points = append(points, ps...)
+}
     
     return points, len(points) > 0
 }
@@ -308,8 +312,8 @@ func doWrite(cfg GatewayConfig) bool {
 `th_modbustcp.go` 使用 `tcp_transceive` 实现 Modbus TCP 通信：
 
 ```go
-//go:export tcp_transceive
-func tcp_transceive(wPtr uint64, wSize int32, rPtr uint64, rCap int32, timeoutMs int32) int32
+//go:wasmimport extism:host/user tcp_transceive
+func tcp_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
 func readHoldingRegisters(cfg GatewayConfig) []map[string]interface{} {
     // 构建 Modbus TCP 请求
@@ -317,14 +321,20 @@ func readHoldingRegisters(cfg GatewayConfig) []map[string]interface{} {
     
     // 发送并接收
     resp := make([]byte, 64)
-    n := tcp_transceive(
-        uint64(uintptr(unsafe.Pointer(&req[0]))), int32(len(req)),
-        uint64(uintptr(unsafe.Pointer(&resp[0]))), int32(len(resp)),
-        500,
-    )
-    
-    // 解析响应
-    return parseResponse(resp[:n])
+    reqMem := pdk.AllocateBytes(req)
+    defer reqMem.Free()
+    respMem := pdk.Allocate(len(resp))
+    defer respMem.Free()
+n := int(tcp_transceive(
+    reqMem.Offset(), uint64(len(req)),
+    respMem.Offset(), uint64(len(resp)),
+    500,
+))
+
+// 解析响应
+mem := pdk.NewMemory(respMem.Offset(), uint64(n))
+mem.Load(resp[:n])
+return parseResponse(resp[:n])
 }
 ```
 
@@ -366,7 +376,7 @@ temp := modbus.Int16ToFloat64(values[0], 0.1)
            │
            ▼
 2. TinyGo 编译为 WASM
-   tinygo build -o xxx.wasm -target=wasi xxx.go
+   tinygo build -o xxx.wasm -target=wasip1 -buildmode=c-shared xxx.go
            │
            ▼
 3. 网管管理界面上传
@@ -384,7 +394,7 @@ temp := modbus.Int16ToFloat64(values[0], 0.1)
 
 | 选项 | 说明 | 推荐值 |
 |------|------|--------|
-| `-target=wasi` | WASI 标准 | 必需 |
+| `-target=wasip1` | WASI Preview1 | 必需 |
 | `-stack-size=64k` | 栈大小 | 64k~128k |
 | `-opt=z` | 优化级别 | z (最小体积) |
 
@@ -392,7 +402,8 @@ temp := modbus.Int16ToFloat64(values[0], 0.1)
 
 ```bash
 tinygo build -o th_modbusrtu.wasm \
-    -target=wasi \
+    -target=wasip1 \
+    -buildmode=c-shared \
     -stack-size=64k \
     -opt=z \
     th_modbusrtu.go
@@ -440,3 +451,4 @@ func debugPoint(name string, value float64) {
 ## 许可证
 
 MIT License
+| `-buildmode=c-shared` | Go PDK 需要 | 必需 |

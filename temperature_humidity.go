@@ -13,7 +13,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -35,7 +34,6 @@ type DriverConfig struct {
 	FuncName      string `json:"func_name"`      // "read" | "write"
 	FieldName     string `json:"field_name"`     // 可写字段名
 	Value         string `json:"value"`          // 写操作的值
-	Debug         bool   `json:"debug"`          // 调试模式
 }
 
 // =============================================================================
@@ -91,7 +89,7 @@ func handle() int32 {
 	cfg := getConfig()
 
 	// 读操作 - 读取所有监控参数
-	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
+	points := readAllPoints(cfg.DeviceAddress)
 
 	outputJSON(map[string]interface{}{
 		"success": true,
@@ -117,7 +115,7 @@ func describe() int32 {
 // 【用户修改】读取所有测点
 // =============================================================================
 // 根据点表配置批量读取寄存器
-func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
+func readAllPoints(devAddr int) []map[string]interface{} {
 	points := make([]map[string]interface{}, 0)
 
 	// 批量读取所有寄存器 (从第一个点表的地址开始)
@@ -127,37 +125,24 @@ func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
 
 	// 计算需要读取的寄存器总数和起始地址
 	startAddr := pointConfig[0].Address
-	maxEndAddr := uint16(0)
+	totalLength := uint16(0)
 	for _, p := range pointConfig {
 		if p.Address < startAddr {
 			startAddr = p.Address
 		}
-		endAddr := p.Address + p.Length
-		if endAddr > maxEndAddr {
-			maxEndAddr = endAddr
-		}
+		totalLength = p.Address + p.Length - startAddr
 	}
-	totalLength := maxEndAddr - startAddr
 
 	// 批量读取
 	req := buildReadFrame(byte(devAddr), startAddr, totalLength)
-	if debug {
-		logf("rtu req=% X", req)
-	}
-	resp, n := serialTransceive(req, int(totalLength)*2+5, 1000)
-	if debug {
-		logf("rtu n=%d resp=%s", n, hexPreview(resp, n, 16))
-	}
+	resp, n := serialTransceive(req, 64, 300)
 	if n <= 0 {
 		return points
 	}
 
 	// 解析响应
 	values, err := parseReadResponse(resp[:n], byte(devAddr))
-	if err != nil {
-		if debug {
-			logf("parse err=%v", err)
-		}
+	if err != nil || len(values) < int(totalLength) {
 		return points
 	}
 
@@ -302,9 +287,6 @@ func getConfig() DriverConfig {
 	if v := strings.TrimSpace(envelope.Config["value"]); v != "" {
 		cfg.Value = v
 	}
-	if v := strings.TrimSpace(envelope.Config["debug"]); v != "" {
-		cfg.Debug = v == "1" || strings.EqualFold(v, "true")
-	}
 	return cfg
 }
 
@@ -326,39 +308,6 @@ func outputJSON(v interface{}) {
 		b = []byte(`{"success":false,"error":"encode failed"}`)
 	}
 	pdk.Output(b)
-}
-
-// 调试日志 (通用)
-func logf(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	pdk.Log(pdk.LogDebug, msg)
-}
-
-// 十六进制预览 (通用)
-func hexPreview(b []byte, n int, max int) string {
-	if n <= 0 {
-		return ""
-	}
-	if n > len(b) {
-		n = len(b)
-	}
-	if n > max {
-		n = max
-	}
-	return fmt.Sprintf("% X", b[:n])
-}
-
-// 转义字符串 (通用)
-func appendEscaped(dst []byte, s string) []byte {
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '\\', '"':
-			dst = append(dst, '\\', s[i])
-		default:
-			dst = append(dst, s[i])
-		}
-	}
-	return dst
 }
 
 func main() {}
