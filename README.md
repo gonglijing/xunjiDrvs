@@ -181,6 +181,20 @@ func describe() int32 {
     return 0
 }
 
+// 驱动版本（网关会读取此版本用于展示）
+const DriverVersion = "1.0.0"
+
+//go:wasmexport version
+func version() int32 {
+    outputJSON(map[string]interface{}{
+        "success": true,
+        "data": map[string]string{
+            "version": DriverVersion,
+        },
+    })
+    return 0
+}
+
 // 从网关配置中获取参数
 func getConfig() GatewayConfig {
     // 使用 PDK 读取输入 JSON

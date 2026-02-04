@@ -38,6 +38,11 @@ type DriverConfig struct {
 }
 
 // =============================================================================
+// 【用户修改】驱动版本
+// =============================================================================
+const DriverVersion = "1.0.0"
+
+// =============================================================================
 // 【用户修改】点表定义
 // =============================================================================
 // 根据实际设备修改以下点表配置
@@ -97,9 +102,12 @@ func handle() int32 {
 		}
 		outputJSON(map[string]interface{}{
 			"success": true,
-			"data": map[string]string{
-				"field": cfg.FieldName,
-				"value": cfg.Value,
+			"points": []map[string]interface{}{
+				{
+					"field_name": cfg.FieldName,
+					"value":      cfg.Value,
+					"rw":         "W",
+				},
 			},
 		})
 		return 0
@@ -124,6 +132,21 @@ func describe() int32 {
 	outputJSON(map[string]interface{}{
 		"success": true,
 		"data":    map[string]string{},
+	})
+	return 0
+}
+
+// =============================================================================
+// 【固定不变】驱动版本
+// =============================================================================
+//
+//go:wasmexport version
+func version() int32 {
+	outputJSON(map[string]interface{}{
+		"success": true,
+		"data": map[string]string{
+			"version": DriverVersion,
+		},
 	})
 	return 0
 }
