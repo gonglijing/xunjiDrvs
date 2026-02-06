@@ -12,7 +12,7 @@ WASMS := $(addsuffix .wasm,$(DRIVER_SRCS))
 all: $(WASMS)
 
 %.wasm: %.go
-	$(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) ./$<
+	$(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) -opt=z ./$<
 
 rtu: th_modbusrtu.wasm
 tcp: th_modbustcp.wasm
