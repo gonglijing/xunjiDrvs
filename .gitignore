@@ -1,0 +1,31 @@
+# Binary outputs
+*.wasm
+*.so
+*.dll
+*.exe
+
+# Build artifacts
+*.o
+*.tmp
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+.DS_Store
+
+# Build directory
+build/
+
+# Tinygo
+cache/
