@@ -1,21 +1,23 @@
-# Air Conditioning Drivers
+# Air Conditioning Driver
 
-This directory contains air conditioning (HVAC) device drivers for FSU.
+## 简介
 
-## Available Drivers
+暂无空调驱动开发文档。
 
-- Coming soon...
+## 状态
 
-## Driver Structure
+🚧 此目录暂无实现驱动
 
-Each driver should include:
-- `README.md` - Driver documentation
-- `*.go` - Go implementation
-- `*.wasm` - WebAssembly plugin (optional)
+## 快速开始
 
-## Usage
+如需开发空调驱动，请参考以下步骤：
 
-Import and register the driver:
-```go
-import _ "fsu/drvs/air_conditioning/your_driver"
-```
+1. 参考 `ups/` 目录的驱动结构
+2. 使用 TinyGo 编译为 WASM
+3. 在 `Makefile` 中注册驱动名称
+
+## 相关文档
+
+- [FSU 驱动开发指南](../README.md)
+- [Extism 文档](https://extism.org/)
+- [TinyGo 文档](https://tinygo.org/)

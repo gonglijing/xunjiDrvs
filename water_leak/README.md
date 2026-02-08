@@ -1,27 +1,23 @@
-# Water Leak Detection Sensors
+# Water Leak Detection Driver
 
-This directory contains water leak detection sensor drivers for FSU.
+## 简介
 
-## Available Sensors
+水浸传感器设备驱动目录。
 
-- Coming soon...
+## 状态
 
-## Supported Types
+🚧 此目录暂无实现驱动
 
-- Spot leak detection sensors
-- Cable-type water leak detection
-- Pool-type leak sensors
+## 快速开始
 
-## Driver Structure
+如需开发水浸传感器驱动，请参考以下步骤：
 
-Each driver should include:
-- `README.md` - Driver documentation
-- `*.go` - Go implementation
-- `*.wasm` - WebAssembly plugin (optional)
+1. 参考 `ups/` 目录的驱动结构
+2. 使用 TinyGo 编译为 WASM
+3. 在 `Makefile` 中注册驱动名称
 
-## Usage
+## 相关文档
 
-Import and register the driver:
-```go
-import _ "fsu/drvs/water_leak/your_driver"
-```
+- [FSU 驱动开发指南](../README.md)
+- [Extism 文档](https://extism.org/)
+- [TinyGo 文档](https://tinygo.org/)

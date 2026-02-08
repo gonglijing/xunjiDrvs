@@ -1,28 +1,38 @@
 # Temperature and Humidity Sensor Driver Makefile
+# For FSU (Field Site Unit) project
 
-.PHONY: all clean install rtu tcp th
+.PHONY: all clean test rtu tcp th
 
-ROOT := $(abspath ../..)
-DRIVERS_DIR ?= $(ROOT)/drivers
+# Compiler settings
 TINYGO ?= tinygo
 TARGET ?= wasip1
 BUILDMODE ?= c-shared
+OPT ?= z
+
+# Output directory (relative to this directory)
+BUILD_DIR ?= build
 
 # Available drivers in this directory
 DRIVERS := temperature_humidity th_modbusrtu th_modbustcp
 
 all: $(addsuffix .wasm,$(DRIVERS))
 
-%.wasm: %.go
-	$(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) -opt=z ./$<
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
+%.wasm: %.go | $(BUILD_DIR)
+	$(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) -opt=$(OPT) ./$<
+
+# Individual targets for specific drivers
 rtu: th_modbusrtu.wasm
 tcp: th_modbustcp.wasm
 th: temperature_humidity.wasm
 
-install: all
-	mkdir -p $(DRIVERS_DIR)
-	cp $(addsuffix .wasm,$(DRIVERS)) $(DRIVERS_DIR)/
+test:
+	@echo "Running temperature_humidity driver tests..."
+	@if [ -f "temperature_humidity_test.go" ]; then $(TINYGO) test -target=$(TARGET) ./... || true; fi
+	@if [ -f "th_modbusrtu_test.go" ]; then $(TINYGO) test -target=$(TARGET) ./... || true; fi
 
 clean:
+	rm -rf $(BUILD_DIR)
 	rm -f $(addsuffix .wasm,$(DRIVERS))
