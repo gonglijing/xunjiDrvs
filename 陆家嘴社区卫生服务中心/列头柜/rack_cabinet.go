@@ -19,9 +19,16 @@ import (
 	pdk "github.com/extism/go-pdk"
 )
 
+// =============================================================================
+// 【固定不变】Host 函数声明
+// =============================================================================
+//
 //go:wasmimport extism:host/user tcp_transceive
 func tcp_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// =============================================================================
+// 【固定不变】配置结构（网关传入）
+// =============================================================================
 type DriverConfig struct {
 	DeviceAddress int    `json:"device_address"`
 	FuncName      string `json:"func_name"`
@@ -29,8 +36,14 @@ type DriverConfig struct {
 	Value         string `json:"value"`
 }
 
+// =============================================================================
+// 【用户修改】驱动版本
+// =============================================================================
 const DriverVersion = "1.0.0"
 
+// =============================================================================
+// 【用户修改】点表定义
+// =============================================================================
 const (
 	FUNC_CODE_READ = 0x03
 
@@ -46,6 +59,10 @@ const (
 	REG_ENERGY_LEN    = 26
 )
 
+// =============================================================================
+// 【固定不变】驱动入口
+// =============================================================================
+//
 //go:wasmexport handle
 func handle() int32 {
 	defer func() {
@@ -64,6 +81,10 @@ func handle() int32 {
 	return 0
 }
 
+// =============================================================================
+// 【固定不变】描述可写字段
+// =============================================================================
+//
 //go:wasmexport describe
 func describe() int32 {
 	outputJSON(map[string]interface{}{
@@ -73,6 +94,10 @@ func describe() int32 {
 	return 0
 }
 
+// =============================================================================
+// 【固定不变】驱动版本
+// =============================================================================
+//
 //go:wasmexport version
 func version() int32 {
 	outputJSON(map[string]interface{}{
@@ -84,6 +109,9 @@ func version() int32 {
 	return 0
 }
 
+// =============================================================================
+// 【用户修改】读取所有测点
+// =============================================================================
 func readAllPoints(devAddr int) []map[string]interface{} {
 	points := make([]map[string]interface{}, 0, 80)
 
@@ -226,6 +254,9 @@ func readU32(values []uint16, startReg uint16, targetReg uint16) (int64, bool) {
 	return int64(v), true
 }
 
+// =============================================================================
+// 【固定不变】Modbus TCP 通信函数
+// =============================================================================
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16) []uint16 {
 	req := buildReadRequest(devAddr, startReg, count)
 	resp := make([]byte, 256)
@@ -308,6 +339,9 @@ func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
 	return values, nil
 }
 
+// =============================================================================
+// 【固定不变】工具函数
+// =============================================================================
 func getConfig() DriverConfig {
 	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
 	var envelope struct {

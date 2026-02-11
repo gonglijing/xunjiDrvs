@@ -11,7 +11,7 @@
 //   - 室内低温报警值(ILTAV): FC=03, 地址=18, 长度=1, 表达式=v/10
 //   - 高湿度报警值(HHAV): FC=03, 地址=19, 长度=1, 表达式=v/10
 //   - 低湿度报警值(LHAV): FC=03, 地址=20, 长度=1, 表达式=v/10
-//   - 设备地址(ADD): FC=03, 地址=94, 长度=1, 表达式=v&0x01
+//   - 设备地址(ADD): FC=03, 地址=94, 长度=1, 表达式=v
 //
 // Host 提供: serial_transceive
 //
@@ -144,7 +144,7 @@ func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
 	}
 
 	if val := readSingleReg(byte(devAddr), REG_ADD, debug); val >= 0 {
-		points = append(points, makePointValue("ADD", float64(val&0x01), 1, "R", "", "设备地址"))
+		points = append(points, makePoint("ADD", int(val), 1, 1, "R", "", "设备地址"))
 	}
 
 	return points
