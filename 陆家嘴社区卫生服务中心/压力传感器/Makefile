@@ -1,4 +1,4 @@
-# Pressure Sensor Driver Makefile
+# pressure Driver Makefile
 # For FSU (Field Site Unit) project
 
 .PHONY: all clean test
@@ -9,24 +9,20 @@ TARGET ?= wasip1
 BUILDMODE ?= c-shared
 OPT ?= z
 
-# Output directory (relative to this directory)
-BUILD_DIR ?= build
+# Makefile location (works from any current directory)
+MAKEFILE_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 # Available drivers in this directory
 DRIVERS := pressure
 
-all: $(addsuffix .wasm,$(DRIVERS))
+all: $(addprefix $(MAKEFILE_DIR)/,$(addsuffix .wasm,$(DRIVERS)))
 
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
-
-%.wasm: %.go | $(BUILD_DIR)
-	$(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) -opt=$(OPT) ./$<
+$(MAKEFILE_DIR)/%.wasm: $(MAKEFILE_DIR)/%.go
+	cd $(MAKEFILE_DIR) && $(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) -opt=$(OPT) ./$(notdir $<)
 
 test:
 	@echo "Running pressure driver tests..."
-	@if [ -f "pressure_test.go" ]; then $(TINYGO) test -target=$(TARGET) ./... || true; else echo "No tests found"; fi
+	@if [ -f "$(MAKEFILE_DIR)/pressure_test.go" ]; then cd $(MAKEFILE_DIR) && $(TINYGO) test -target=$(TARGET) ./... || true; else echo "No tests found"; fi
 
 clean:
-	rm -rf $(BUILD_DIR)
-	rm -f $(addsuffix .wasm,$(DRIVERS))
+	rm -f $(addprefix $(MAKEFILE_DIR)/,$(addsuffix .wasm,$(DRIVERS)))

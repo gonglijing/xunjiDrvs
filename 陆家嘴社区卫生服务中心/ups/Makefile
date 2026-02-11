@@ -1,4 +1,4 @@
-# level Driver Makefile
+# UPS Driver Makefile
 # For FSU (Field Site Unit) project
 
 .PHONY: all clean test
@@ -13,7 +13,7 @@ OPT ?= z
 MAKEFILE_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 # Available drivers in this directory
-DRIVERS := level
+DRIVERS := ups_kstar
 
 all: $(addprefix $(MAKEFILE_DIR)/,$(addsuffix .wasm,$(DRIVERS)))
 
@@ -21,8 +21,8 @@ $(MAKEFILE_DIR)/%.wasm: $(MAKEFILE_DIR)/%.go
 	cd $(MAKEFILE_DIR) && $(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) -opt=$(OPT) ./$(notdir $<)
 
 test:
-	@echo "Running level driver tests..."
-	@if [ -f "$(MAKEFILE_DIR)/level_test.go" ]; then cd $(MAKEFILE_DIR) && $(TINYGO) test -target=$(TARGET) ./... || true; else echo "No tests found"; fi
+	@echo "Running UPS driver tests..."
+	@if [ -f "$(MAKEFILE_DIR)/ups_kstar_test.go" ]; then cd $(MAKEFILE_DIR) && $(TINYGO) test -target=$(TARGET) ./... || true; else echo "No tests found"; fi
 
 clean:
 	rm -f $(addprefix $(MAKEFILE_DIR)/,$(addsuffix .wasm,$(DRIVERS)))
