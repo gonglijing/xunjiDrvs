@@ -38,7 +38,11 @@ type DriverConfig struct {
 }
 
 const DriverVersion = "1.0.0"
-const FUNC_CODE_READ = 0x03
+
+const (
+	FUNC_CODE_READ_HOLDING = 0x03
+	FUNC_CODE_READ_INPUT   = 0x04
+)
 
 type PointConfig struct {
 	Field    string
@@ -393,13 +397,11 @@ func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
 	}
 
 	for _, rg := range ranges {
-		values := readMultipleRegs(byte(devAddr), rg.Start, rg.Count, debug)
-		if values == nil {
-			continue
-		}
-		for i, v := range values {
-			valueByAddr[rg.Start+uint16(i)] = v
-		}
+		readRangeAdaptive(byte(devAddr), rg.Start, rg.Count, debug, valueByAddr)
+	}
+
+	if debug && len(valueByAddr) == 0 {
+		logf("no points collected after adaptive reads")
 	}
 
 	for _, cfg := range pointConfig {
@@ -419,29 +421,90 @@ func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
 	return points
 }
 
+func readRangeAdaptive(devAddr byte, logicalStart uint16, count uint16, debug bool, out map[uint16]uint16) {
+	if count == 0 {
+		return
+	}
+
+	values := readMultipleRegsLogical(devAddr, logicalStart, count, debug)
+	if values != nil {
+		for i, v := range values {
+			out[logicalStart+uint16(i)] = v
+		}
+		return
+	}
+
+	if count == 1 {
+		if debug {
+			logf("skip unreadable register=%d", logicalStart)
+		}
+		return
+	}
+
+	half := count / 2
+	readRangeAdaptive(devAddr, logicalStart, half, debug, out)
+	readRangeAdaptive(devAddr, logicalStart+half, count-half, debug, out)
+}
+
+func readMultipleRegsLogical(devAddr byte, logicalStart uint16, count uint16, debug bool) []uint16 {
+	if values := readMultipleRegs(devAddr, logicalStart, count, debug); values != nil {
+		return values
+	}
+
+	if logicalStart == 0 {
+		return nil
+	}
+
+	if debug {
+		logf("retry with 0-based address logical=%d query=%d count=%d", logicalStart, logicalStart-1, count)
+	}
+
+	return readMultipleRegs(devAddr, logicalStart-1, count, debug)
+}
+
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
 	if count > 50 {
 		count = 50
 	}
-	req := buildReadFrame(devAddr, startReg, count)
-	if debug {
-		logf("rtu req=% X", req)
+
+	if values, err := readMultipleRegsWithFunc(devAddr, startReg, count, FUNC_CODE_READ_HOLDING, debug); err == nil {
+		return values
+	} else if debug {
+		logf("read holding failed addr=%d count=%d err=%v", startReg, count, err)
 	}
+
+	if values, err := readMultipleRegsWithFunc(devAddr, startReg, count, FUNC_CODE_READ_INPUT, debug); err == nil {
+		return values
+	} else if debug {
+		logf("read input failed addr=%d count=%d err=%v", startReg, count, err)
+	}
+
+	return nil
+}
+
+func readMultipleRegsWithFunc(devAddr byte, startReg uint16, count uint16, funcCode byte, debug bool) ([]uint16, error) {
+	req := buildReadFrame(devAddr, startReg, count, funcCode)
+	if debug {
+		logf("rtu req fc=%02X % X", funcCode, req)
+	}
+
 	resp, n := serialTransceive(req, int(count)*2+5, 1000)
 	if debug {
-		logf("rtu n=%d resp=%s", n, hexPreview(resp, n, 24))
+		logf("rtu fc=%02X n=%d resp=%s", funcCode, n, hexPreview(resp, n, 24))
 	}
 	if n <= 0 {
-		return nil
+		return nil, errf("read timeout")
 	}
-	values, err := parseReadResponse(resp[:n], devAddr)
-	if err != nil || len(values) < int(count) {
-		if debug {
-			logf("parse err=%v", err)
-		}
-		return nil
+
+	values, err := parseReadResponse(resp[:n], devAddr, funcCode)
+	if err != nil {
+		return nil, err
 	}
-	return values
+	if len(values) < int(count) {
+		return nil, errf("insufficient register data")
+	}
+
+	return values, nil
 }
 
 func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
@@ -471,10 +534,10 @@ func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
 	return resp, n
 }
 
-func buildReadFrame(addr byte, start uint16, qty uint16) []byte {
+func buildReadFrame(addr byte, start uint16, qty uint16, funcCode byte) []byte {
 	req := make([]byte, 8)
 	req[0] = addr
-	req[1] = FUNC_CODE_READ
+	req[1] = funcCode
 	req[2], req[3] = byte(start>>8), byte(start)
 	req[4], req[5] = byte(qty>>8), byte(qty)
 	crc := crc16(req[:6])
@@ -482,9 +545,15 @@ func buildReadFrame(addr byte, start uint16, qty uint16) []byte {
 	return req
 }
 
-func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
-	if len(data) < 5 || data[0] != addr || data[1] != FUNC_CODE_READ {
+func parseReadResponse(data []byte, addr byte, funcCode byte) ([]uint16, error) {
+	if len(data) < 5 || data[0] != addr {
 		return nil, errf("invalid response")
+	}
+	if data[1] == (funcCode | 0x80) {
+		return nil, errf("modbus exception code=" + strconv.Itoa(int(data[2])))
+	}
+	if data[1] != funcCode {
+		return nil, errf("unexpected function code")
 	}
 	byteCnt := int(data[2])
 	if byteCnt < 2 || len(data) < 3+byteCnt+2 {
