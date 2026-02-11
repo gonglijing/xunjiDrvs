@@ -1,7 +1,7 @@
 # FSU Drivers Root Makefile
 # Builds all device driver WebAssembly modules
 
-.PHONY: all clean test help
+.PHONY: all clean test help air_conditioning ups electric_meter temperature_humidity water_leak cabinet_header pressure install
 
 # Compiler settings
 TINYGO ?= tinygo
@@ -17,7 +17,8 @@ DRIVERS := \
 	ups/ups_kstar \
 	temperature_humidity/temperature_humidity \
 	temperature_humidity/th_modbusrtu \
-	temperature_humidity/th_modbustcp
+	temperature_humidity/th_modbustcp \
+	pressure/pressure
 
 # Default target - build all drivers
 all:
@@ -47,6 +48,9 @@ water_leak:
 cabinet_header:
 	@$(MAKE) -C cabinet_header all TINYGO=$(TINYGO) TARGET=$(TARGET) BUILDMODE=$(BUILDMODE) OPT=$(OPT)
 
+pressure:
+	@$(MAKE) -C pressure all TINYGO=$(TINYGO) TARGET=$(TARGET) BUILDMODE=$(BUILDMODE) OPT=$(OPT)
+
 # Install all wasm files to parent fsu/drivers directory
 install: all
 	@mkdir -p $(BUILD_DIR)
@@ -55,7 +59,7 @@ install: all
 
 # Run tests for all drivers
 test:
-	@for dir in air_conditioning ups electric_meter temperature_humidity water_leak cabinet_header; do \
+	@for dir in air_conditioning ups electric_meter temperature_humidity water_leak cabinet_header pressure; do \
 		if [ -d "$$dir" ]; then \
 			$(MAKE) -C $$dir test || true; \
 		fi; \
@@ -63,7 +67,7 @@ test:
 
 # Clean all build artifacts
 clean:
-	@for dir in air_conditioning ups electric_meter temperature_humidity water_leak cabinet_header; do \
+	@for dir in air_conditioning ups electric_meter temperature_humidity water_leak cabinet_header pressure; do \
 		$(MAKE) -C $$dir clean 2>/dev/null || true; \
 	done
 	rm -rf $(BUILD_DIR)
@@ -81,6 +85,7 @@ help:
 	@echo "  ups                - Build UPS drivers"
 	@echo "  electric_meter     - Build electric meter drivers"
 	@echo "  temperature_humidity - Build temperature/humidity drivers"
+	@echo "  pressure           - Build pressure drivers"
 	@echo "  water_leak         - Build water leak detection drivers"
 	@echo "  cabinet_header     - Build cabinet header/PDU drivers"
 	@echo "  install            - Install all wasm files to parent drivers dir"

@@ -13,6 +13,7 @@
 .vscode/
 *.swp
 *.swo
+*.wasm
 
 # Logs
 *.log
