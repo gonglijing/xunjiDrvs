@@ -10,7 +10,7 @@
 //   - 总点位: 275
 //   - 功能码: 0x03 (HOLDING_REGISTER)
 //   - 原始连续地址段: 257~416, 513~627
-//   - 读取分片(每次<=125寄存器): 257+125, 382+35, 513+115
+//   - 读取分片(每次<=50寄存器): 257+50, 307+50, 357+50, 407+10, 513+50, 563+50, 613+15
 //
 // Host 提供: serial_transceive
 //
@@ -383,9 +383,13 @@ func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
 		Start uint16
 		Count uint16
 	}{
-		{Start: 257, Count: 125},
-		{Start: 382, Count: 35},
-		{Start: 513, Count: 115},
+		{Start: 257, Count: 50},
+		{Start: 307, Count: 50},
+		{Start: 357, Count: 50},
+		{Start: 407, Count: 10},
+		{Start: 513, Count: 50},
+		{Start: 563, Count: 50},
+		{Start: 613, Count: 15},
 	}
 
 	for _, rg := range ranges {
@@ -416,6 +420,9 @@ func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
 }
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
+	if count > 50 {
+		count = 50
+	}
 	req := buildReadFrame(devAddr, startReg, count)
 	if debug {
 		logf("rtu req=% X", req)
