@@ -37,7 +37,10 @@ type DriverConfig struct {
 	Debug         bool   `json:"debug"`
 }
 
-const DriverVersion = "1.0.0"
+const (
+	DriverVersion    = "1.0.0"
+	DriverProductKey = "ljzchc_qingniao_fire"
+)
 
 const (
 	FUNC_CODE_READ_HOLDING = 0x03
@@ -353,8 +356,9 @@ func handle() int32 {
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
 	outputJSON(map[string]interface{}{
-		"success": true,
-		"points":  points,
+		"success":    true,
+		"productKey": DriverProductKey,
+		"points":     points,
 	})
 	return 0
 }
@@ -373,7 +377,8 @@ func version() int32 {
 	outputJSON(map[string]interface{}{
 		"success": true,
 		"data": map[string]string{
-			"version": DriverVersion,
+			"version":    DriverVersion,
+			"productKey": DriverProductKey,
 		},
 	})
 	return 0

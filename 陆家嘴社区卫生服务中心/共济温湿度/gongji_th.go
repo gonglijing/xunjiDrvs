@@ -35,11 +35,14 @@ type DriverConfig struct {
 	Debug         bool   `json:"debug"`
 }
 
-const DriverVersion = "1.0.0"
+const (
+	DriverVersion    = "1.0.0"
+	DriverProductKey = "ljzchc_gongji_th"
+)
 
 const (
-	REG_TEMPERATURE    = 0
-	REG_HUMIDITY       = 1
+	REG_TEMPERATURE     = 0
+	REG_HUMIDITY        = 1
 	REG_DEW_TEMPERATURE = 2
 
 	FUNC_CODE_READ_INPUT = 0x04
@@ -57,8 +60,9 @@ func handle() int32 {
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
 	outputJSON(map[string]interface{}{
-		"success": true,
-		"points":  points,
+		"success":    true,
+		"productKey": DriverProductKey,
+		"points":     points,
 	})
 	return 0
 }
@@ -77,7 +81,8 @@ func version() int32 {
 	outputJSON(map[string]interface{}{
 		"success": true,
 		"data": map[string]string{
-			"version": DriverVersion,
+			"version":    DriverVersion,
+			"productKey": DriverProductKey,
 		},
 	})
 	return 0

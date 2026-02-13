@@ -39,7 +39,10 @@ type DriverConfig struct {
 // =============================================================================
 // 【用户修改】驱动版本
 // =============================================================================
-const DriverVersion = "1.0.0"
+const (
+	DriverVersion    = "1.0.0"
+	DriverProductKey = "ljzchc_rack_cabinet"
+)
 
 // =============================================================================
 // 【用户修改】点表定义
@@ -75,8 +78,9 @@ func handle() int32 {
 	points := readAllPoints(cfg.DeviceAddress)
 
 	outputJSON(map[string]interface{}{
-		"success": true,
-		"points":  points,
+		"success":    true,
+		"productKey": DriverProductKey,
+		"points":     points,
 	})
 	return 0
 }
@@ -103,7 +107,8 @@ func version() int32 {
 	outputJSON(map[string]interface{}{
 		"success": true,
 		"data": map[string]string{
-			"version": DriverVersion,
+			"version":    DriverVersion,
+			"productKey": DriverProductKey,
 		},
 	})
 	return 0
