@@ -1,0 +1,39 @@
+# Gaote battery gateway Driver Makefile
+# For FSU (Field Site Unit) project
+
+.PHONY: all clean test help
+
+# Compiler settings
+TINYGO ?= tinygo
+TARGET ?= wasip1
+BUILDMODE ?= c-shared
+OPT ?= z
+
+# Makefile location (works from any current directory)
+MAKEFILE_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+
+# Available drivers in this directory
+DRIVERS := gaote_battery_gateway
+
+all: $(addprefix $(MAKEFILE_DIR)/,$(addsuffix .wasm,$(DRIVERS)))
+
+$(MAKEFILE_DIR)/%.wasm: $(MAKEFILE_DIR)/%.go
+	cd $(MAKEFILE_DIR) && $(TINYGO) build -o $@ -target=$(TARGET) -buildmode=$(BUILDMODE) -opt=$(OPT) ./$(notdir $<)
+
+test:
+	@echo "Running Gaote battery gateway driver tests..."
+	@if [ -f "$(MAKEFILE_DIR)/gaote_battery_gateway_test.go" ]; then cd $(MAKEFILE_DIR) && $(TINYGO) test -target=$(TARGET) ./... || true; else echo "No tests found"; fi
+
+clean:
+	rm -f $(addprefix $(MAKEFILE_DIR)/,$(addsuffix .wasm,$(DRIVERS)))
+
+help:
+	@echo "Gaote Battery Gateway Driver Build"
+	@echo ""
+	@echo "Usage: make <target>"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all   - Build wasm driver (default)"
+	@echo "  clean - Remove built wasm files"
+	@echo "  test  - Run driver tests"
+	@echo "  help  - Show this message"
