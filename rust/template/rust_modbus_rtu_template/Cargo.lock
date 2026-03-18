@@ -260,7 +260,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust_gongji_th"
+name = "rust_modbus_rtu_template"
 version = "0.1.0"
 dependencies = [
  "extism-pdk",

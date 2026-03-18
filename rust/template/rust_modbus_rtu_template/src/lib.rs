@@ -1,25 +1,30 @@
-//! 一个偏“教学用途”的 Rust Extism 驱动模板。
+//! Rust Modbus RTU 驱动模板。
 //!
-//! 这个 POC 的目标不是追求最少代码，而是把一个只读 Modbus RTU 驱动所需的关键环节
-//! 都完整铺开，方便后续把点表和协议替换成真实设备：
-//! - 解析网关输入
-//! - 构造 RTU 请求帧
-//! - 通过宿主提供的 serial_transceive 做一次串口往返
-//! - 解析寄存器响应
-//! - 按点表配置生成统一 points 输出
+//! 这个模板刻意保留了较多注释，目标不是代码最短，而是方便后续复制后直接改成真实驱动。
+//! 如果你已经有一个 TinyGo 驱动，希望迁移到 Rust，通常只需要替换：
+//! - 点表定义 POINT_CONFIGS
+//! - 功能码常量 FUNC_CODE_READ
+//! - read_all_points 中的寄存器换算方式
+//! - DRIVER_PRODUCT_KEY / DRIVER_VERSION
 use extism_pdk::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const DRIVER_VERSION: &str = "0.2.0";
+const DRIVER_VERSION: &str = "0.1.0";
 const DRIVER_PRODUCT_KEY: &str = "rust_modbus_rtu_template";
-const DRIVER_NAME: &str = "Rust Modbus RTU Template";
+const DRIVER_NAME: &str = "Rust Modbus RTU Driver Template";
+
+const DEFAULT_DEVICE_ADDRESS: u8 = 1;
 const DEFAULT_TIMEOUT_MS: u64 = 1000;
-const FUNC_CODE_READ_INPUT: u8 = 0x04;
+const FUNC_CODE_READ: u8 = 0x04;
 
 #[link(wasm_import_module = "extism:host/user")]
 extern "C" {
-    // 这个函数由宿主提供，插件本身只负责准备请求和接收响应。
+    // 这个函数由宿主实现。
+    // 插件负责：
+    // 1. 准备请求帧
+    // 2. 分配接收缓冲区
+    // 3. 交给宿主完成一次串口收发
     fn serial_transceive(
         write_ptr: u64,
         write_size: u64,
@@ -31,20 +36,10 @@ extern "C" {
 
 #[derive(Debug, Deserialize)]
 struct DriverInvocationInput {
-    // 模板里保留这些字段，主要是为了说明真实驱动在运行时能拿到哪些上下文。
-    // 具体业务是否使用，取决于设备和网关的对接方式。
-    #[serde(default)]
-    device_id: i64,
-    #[serde(default)]
-    device_name: String,
-    #[serde(default)]
-    resource_id: i64,
-    #[serde(default)]
-    resource_type: String,
+    // 当前网关真正稳定提供的是 config，因此模板只强依赖这一项。
+    // 其他字段如 device_id、resource_type 如果未来有明确约定，再按需加回来即可。
     #[serde(default)]
     config: BTreeMap<String, String>,
-    #[serde(default)]
-    device_config: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,6 +55,7 @@ struct DriverResponse {
 
 #[derive(Debug, Serialize)]
 struct DriverPoint {
+    #[serde(rename = "field_name")]
     field_name: String,
     value: String,
     rw: String,
@@ -68,20 +64,23 @@ struct DriverPoint {
 }
 
 #[derive(Debug, Serialize)]
-struct VersionResponse {
+struct DescribeResponse {
     success: bool,
     data: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
-struct DescribeResponse {
+struct VersionResponse {
     success: bool,
     data: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct PointConfig {
-    // PointConfig 把“寄存器定义”和“点位元数据”绑在一起，方便直接按表生成输出。
+    // 一个 PointConfig 完整描述“一个业务点最终如何形成”。
+    // Address/Length 说明去哪读；
+    // Scale/Decimals 说明如何把原始寄存器值变成展示值；
+    // RW/Unit/Label 则是输出给网关的业务元数据。
     field: &'static str,
     address: u16,
     length: u16,
@@ -92,7 +91,11 @@ struct PointConfig {
     label: &'static str,
 }
 
-// 模板点表：真实项目通常只需要替换这一块和下方的功能码/缩放逻辑。
+// 模板默认点表故意做得很短，便于阅读：
+// - 三个点刚好落在一段连续寄存器里
+// - 都是单寄存器
+// - 都遵循“原值 * 0.1”的简单换算
+// 这样迁移真实驱动时，可以先理解整体骨架，再替换成自己的点表。
 const POINT_CONFIGS: &[PointConfig] = &[
     PointConfig {
         field: "temperature",
@@ -122,97 +125,85 @@ const POINT_CONFIGS: &[PointConfig] = &[
         decimals: 1,
         rw: "R",
         unit: "℃",
-        label: "露点温度",
+        label: "漏点温度",
     },
 ];
 
 #[plugin_fn]
 pub fn handle(input: String) -> FnResult<String> {
-    // handle 是驱动的主入口：解析输入，读取设备，最后输出统一 JSON。
+    // handle 是驱动主入口：
+    // - 解析网关输入
+    // - 执行读取
+    // - 统一打包 success/productKey/points/error
     let request: DriverInvocationInput = serde_json::from_str(&input)
-        .map_err(|e| Error::msg(format!("invalid input json: {e}")))?;
+        .map_err(|err| Error::msg(format!("invalid input json: {err}")))?;
 
-    let response = match try_handle(&request) {
+    let response = match read_all_points(&request.config) {
         Ok(points) => DriverResponse {
             success: true,
             product_key: DRIVER_PRODUCT_KEY.to_string(),
             points,
             error: String::new(),
         },
-        Err(err) => DriverResponse {
+        Err(error) => DriverResponse {
             success: false,
             product_key: DRIVER_PRODUCT_KEY.to_string(),
             points: Vec::new(),
-            error: err,
+            error,
         },
     };
 
-    Ok(
-        serde_json::to_string(&response)
-            .map_err(|e| Error::msg(format!("serialize output failed: {e}")))?,
-    )
+    Ok(serde_json::to_string(&response)
+        .map_err(|err| Error::msg(format!("serialize handle output failed: {err}")))?)
 }
 
 #[plugin_fn]
 pub fn describe() -> FnResult<String> {
-    // describe 主要告诉调用方这个模板需要哪些 config，以及它适合什么传输方式。
+    // describe 返回的是“如何使用这个驱动”的静态说明。
+    // 这里不追求复杂结构，而是用最稳定的字符串 map，方便宿主兼容。
     let mut data = BTreeMap::new();
     data.insert("name".into(), DRIVER_NAME.into());
     data.insert("language".into(), "rust".into());
     data.insert("transport".into(), "serial_transceive".into());
     data.insert("template".into(), "modbus_rtu_readonly".into());
-    data.insert("device_address".into(), "Modbus 从站地址，必填".into());
+    data.insert("device_address".into(), "Modbus 从站地址，默认 1".into());
     data.insert("timeout_ms".into(), "串口超时毫秒，默认 1000".into());
     data.insert("debug".into(), "true/false，可选".into());
-    data.insert("notes".into(), "修改 POINT_CONFIGS、FUNC_CODE_READ_INPUT 和缩放逻辑即可复用".into());
 
-    Ok(
-        serde_json::to_string(&DescribeResponse { success: true, data })
-            .map_err(|e| Error::msg(format!("serialize describe failed: {e}")))?,
-    )
+    Ok(serde_json::to_string(&DescribeResponse {
+        success: true,
+        data,
+    })
+    .map_err(|err| Error::msg(format!("serialize describe output failed: {err}")))?)
 }
 
 #[plugin_fn]
 pub fn version() -> FnResult<String> {
-    // version 返回一个非常稳定的小结构，供网关做驱动识别和版本展示。
+    // version 只保留最稳定的最小字段，用于网关识别驱动版本。
     let mut data = BTreeMap::new();
     data.insert("version".into(), DRIVER_VERSION.into());
     data.insert("productKey".into(), DRIVER_PRODUCT_KEY.into());
 
-    Ok(
-        serde_json::to_string(&VersionResponse { success: true, data })
-            .map_err(|e| Error::msg(format!("serialize version failed: {e}")))?,
-    )
+    Ok(serde_json::to_string(&VersionResponse {
+        success: true,
+        data,
+    })
+    .map_err(|err| Error::msg(format!("serialize version output failed: {err}")))?)
 }
 
-fn try_handle(request: &DriverInvocationInput) -> Result<Vec<DriverPoint>, String> {
-    // 这里先做与设备无关的基本校验，再进入真正的寄存器读取流程。
-    if request.resource_type.trim() != "serial" {
-        return Err("modbus rtu 模板仅支持 serial 资源".into());
-    }
+fn read_all_points(config: &BTreeMap<String, String>) -> Result<Vec<DriverPoint>, String> {
     if POINT_CONFIGS.is_empty() {
         return Err("point config is empty".into());
     }
 
-    let device_address = parse_required_u8(&request.config, "device_address")?;
-    let timeout_ms = parse_u64_config(request.config.get("timeout_ms"), DEFAULT_TIMEOUT_MS);
-    let debug = parse_bool_config(request.config.get("debug"));
+    let device_address = parse_u8_config(config.get("device_address"), DEFAULT_DEVICE_ADDRESS);
+    let timeout_ms = parse_u64_config(config.get("timeout_ms"), DEFAULT_TIMEOUT_MS);
+    let debug = parse_bool_config(config.get("debug"));
 
-    if debug {
-        debug!(
-            "handle device_id={} device_name={} resource_id={} device_config_len={}",
-            request.device_id,
-            request.device_name.trim(),
-            request.resource_id,
-            request.device_config.len()
-        );
-    }
-
-    read_all_points(device_address, timeout_ms, debug)
-}
-
-fn read_all_points(device_address: u8, timeout_ms: u64, debug: bool) -> Result<Vec<DriverPoint>, String> {
-    // 通过扫描点表自动计算连续读取区间，避免手工维护“起始地址 + 总长度”两份信息。
+    // 这里选择“扫描点表 -> 自动计算连续读取区间”，原因是：
+    // - 点表仍然是唯一事实来源
+    // - 新增点位时不需要再手工同步一份总长度
+    // - 对于连续寄存器型设备，可读性通常优于散落的硬编码常量
     let start_address = POINT_CONFIGS
         .iter()
         .map(|point| point.address)
@@ -225,19 +216,21 @@ fn read_all_points(device_address: u8, timeout_ms: u64, debug: bool) -> Result<V
         .ok_or_else(|| "point config is empty".to_string())?;
     let quantity = end_address - start_address;
 
-    let request = build_read_frame(device_address, start_address, quantity);
+    let request_frame = build_read_frame(device_address, start_address, quantity);
     if debug {
-        debug!("rtu req={}", bytes_to_hex(&request));
+        debug!("rtu req={}", bytes_to_hex(&request_frame));
     }
 
     let response_capacity = expected_response_len(quantity);
-    let response = serial_roundtrip(&request, response_capacity, timeout_ms)?;
+    let response = serial_roundtrip(&request_frame, response_capacity, timeout_ms)?;
     if debug {
         debug!("rtu resp={}", bytes_to_hex(&response));
     }
 
-    let registers = parse_read_response(&response, device_address, FUNC_CODE_READ_INPUT)?;
-    // 拿到连续寄存器后，再按点表把每个位置翻译成业务输出。
+    let registers = parse_read_response(&response, device_address, FUNC_CODE_READ)?;
+
+    // 通信层拿到的是一个连续寄存器切片；
+    // 业务层真正关心的，是如何按点表把这些寄存器恢复成统一 points。
     let mut points = Vec::with_capacity(POINT_CONFIGS.len());
     for point in POINT_CONFIGS {
         let offset = usize::from(point.address - start_address);
@@ -245,11 +238,15 @@ fn read_all_points(device_address: u8, timeout_ms: u64, debug: bool) -> Result<V
             continue;
         }
 
+        // 模板默认只处理单寄存器点位。
+        // 如果你的设备存在 2 寄存器或 4 寄存器的整型/浮点数，
+        // 建议在这里单独抽一个 decode_u32 / decode_i32 / decode_f32 帮助函数。
         let raw = registers[offset];
-        let scaled = f64::from(raw) * point.scale;
+        let value = f64::from(raw) * point.scale;
+
         points.push(DriverPoint {
             field_name: point.field.to_string(),
-            value: format_scaled_value(scaled, point.decimals),
+            value: format_scaled_value(value, point.decimals),
             rw: point.rw.to_string(),
             unit: point.unit.to_string(),
             label: point.label.to_string(),
@@ -260,10 +257,11 @@ fn read_all_points(device_address: u8, timeout_ms: u64, debug: bool) -> Result<V
 }
 
 fn build_read_frame(device_address: u8, start_address: u16, quantity: u16) -> Vec<u8> {
-    // RTU 帧结构固定，因此直接按协议顺序依次写入即可。
+    // 组装标准 Modbus RTU 读寄存器请求：
+    // [设备地址][功能码][起始地址高][起始地址低][数量高][数量低][CRC低][CRC高]
     let mut frame = vec![
         device_address,
-        FUNC_CODE_READ_INPUT,
+        FUNC_CODE_READ,
         (start_address >> 8) as u8,
         start_address as u8,
         (quantity >> 8) as u8,
@@ -275,33 +273,42 @@ fn build_read_frame(device_address: u8, start_address: u16, quantity: u16) -> Ve
     frame
 }
 
-fn parse_read_response(data: &[u8], device_address: u8, function_code: u8) -> Result<Vec<u16>, String> {
-    // 读取响应时优先区分“太短”“功能码异常”“CRC 错误”等情况，
-    // 这样后续排查串口参数或设备地址错误时更容易定位。
-    if data.len() < 5 {
+fn parse_read_response(
+    response: &[u8],
+    device_address: u8,
+    function_code: u8,
+) -> Result<Vec<u16>, String> {
+    // 这里优先做最值得排障的几类校验：
+    // - 帧太短
+    // - 地址不匹配
+    // - 功能码不匹配
+    // - 长度不匹配
+    // - CRC 不通过
+    if response.len() < 5 {
         return Err("response too short".into());
     }
-    if data[0] != device_address {
+    if response[0] != device_address {
         return Err("device address mismatch".into());
     }
-    if data[1] != function_code {
+    if response[1] != function_code {
         return Err("function code mismatch".into());
     }
 
-    let byte_count = data[2] as usize;
-    let expected_len = 3 + byte_count + 2;
-    if data.len() < expected_len {
-        return Err("response length mismatch".into());
-    }
-    if !check_crc(&data[..expected_len]) {
-        return Err("crc check failed".into());
-    }
+    let byte_count = usize::from(response[2]);
     if byte_count % 2 != 0 {
         return Err("byte count must be even".into());
     }
 
+    let expected_len = 3 + byte_count + 2;
+    if response.len() < expected_len {
+        return Err("response length mismatch".into());
+    }
+    if !check_crc(&response[..expected_len]) {
+        return Err("crc check failed".into());
+    }
+
+    let payload = &response[3..3 + byte_count];
     let mut registers = Vec::with_capacity(byte_count / 2);
-    let payload = &data[3..3 + byte_count];
     let mut index = 0;
     while index < payload.len() {
         let value = u16::from(payload[index]) << 8 | u16::from(payload[index + 1]);
@@ -311,19 +318,23 @@ fn parse_read_response(data: &[u8], device_address: u8, function_code: u8) -> Re
     Ok(registers)
 }
 
-fn serial_roundtrip(frame: &[u8], response_len: usize, timeout_ms: u64) -> Result<Vec<u8>, String> {
-    if frame.is_empty() {
+fn serial_roundtrip(
+    request: &[u8],
+    response_capacity: usize,
+    timeout_ms: u64,
+) -> Result<Vec<u8>, String> {
+    if request.is_empty() {
         return Err("empty request frame".into());
     }
-    if response_len == 0 {
-        return Err("response_len must be > 0".into());
+    if response_capacity == 0 {
+        return Err("response capacity must be > 0".into());
     }
 
-    let mut response = vec![0u8; response_len];
+    let mut response = vec![0u8; response_capacity];
     let written = unsafe {
         serial_transceive(
-            frame.as_ptr() as u64,
-            frame.len() as u64,
+            request.as_ptr() as u64,
+            request.len() as u64,
             response.as_mut_ptr() as u64,
             response.len() as u64,
             timeout_ms,
@@ -342,31 +353,31 @@ fn serial_roundtrip(frame: &[u8], response_len: usize, timeout_ms: u64) -> Resul
 }
 
 fn expected_response_len(quantity: u16) -> usize {
+    // RTU 正常读响应长度：
+    // 设备地址 1 + 功能码 1 + 字节数 1 + 数据区 quantity*2 + CRC 2
     3 + usize::from(quantity) * 2 + 2
 }
 
-fn parse_required_u8(config: &BTreeMap<String, String>, key: &str) -> Result<u8, String> {
-    config
-        .get(key)
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("missing required config: {key}"))?
-        .parse::<u8>()
-        .map_err(|_| format!("invalid u8 config: {key}"))
+fn parse_u8_config(value: Option<&String>, default: u8) -> u8 {
+    value
+        .and_then(|text| text.trim().parse::<u8>().ok())
+        .unwrap_or(default)
 }
 
 fn parse_u64_config(value: Option<&String>, default: u64) -> u64 {
     value
-        .and_then(|s| s.trim().parse::<u64>().ok())
+        .and_then(|text| text.trim().parse::<u64>().ok())
         .filter(|v| *v > 0)
         .unwrap_or(default)
 }
 
 fn parse_bool_config(value: Option<&String>) -> bool {
     value
-        .map(|s| {
-            let normalized = s.trim();
-            normalized.eq_ignore_ascii_case("true") || normalized == "1" || normalized.eq_ignore_ascii_case("yes")
+        .map(|text| {
+            let normalized = text.trim();
+            normalized.eq_ignore_ascii_case("true")
+                || normalized.eq_ignore_ascii_case("yes")
+                || normalized == "1"
         })
         .unwrap_or(false)
 }
@@ -396,6 +407,9 @@ fn check_crc(data: &[u8]) -> bool {
 }
 
 fn format_scaled_value(value: f64, decimals: usize) -> String {
+    // 输出风格尽量贴近当前 TinyGo 驱动：
+    // - 保留需要的小数位
+    // - 自动去掉末尾无意义的 0
     let mut rendered = format!("{value:.decimals$}");
     if decimals == 0 {
         return rendered;
@@ -441,8 +455,9 @@ mod tests {
         let crc = crc16(&response);
         response.push((crc & 0x00ff) as u8);
         response.push((crc >> 8) as u8);
-        let values = parse_read_response(&response, 0x01, 0x04).unwrap();
-        assert_eq!(values, vec![0x00FD, 0x01F9]);
+
+        let registers = parse_read_response(&response, 0x01, 0x04).unwrap();
+        assert_eq!(registers, vec![0x00FD, 0x01F9]);
     }
 
     #[test]
@@ -450,5 +465,13 @@ mod tests {
         assert_eq!(format_scaled_value(12.3000, 3), "12.3");
         assert_eq!(format_scaled_value(12.0, 1), "12");
         assert_eq!(format_scaled_value(12.0, 0), "12");
+    }
+
+    #[test]
+    fn parse_bool_config_supports_common_true_values() {
+        assert!(parse_bool_config(Some(&"true".to_string())));
+        assert!(parse_bool_config(Some(&"1".to_string())));
+        assert!(parse_bool_config(Some(&"yes".to_string())));
+        assert!(!parse_bool_config(Some(&"false".to_string())));
     }
 }
