@@ -14,7 +14,7 @@ package main
 import (
 	"strconv"
 
-	pdk "github.com/extism/go-pdk"
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/hostio"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbusrtu"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
 )
@@ -25,6 +25,10 @@ import (
 //
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
+
+func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
+	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
+}
 
 // =============================================================================
 // 【固定不变】配置结构（网关传入）
@@ -175,24 +179,8 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	totalLength := maxEndAddr - startAddr
 
 	// 批量读取
-	req := buildReadFrame(byte(devAddr), startAddr, totalLength)
-	if debug {
-		logf("rtu req=% X", req)
-	}
-	resp, n := serialTransceive(req, int(totalLength)*2+5, 1000)
-	if debug {
-		logf("rtu n=%d resp=%s", n, hexPreview(resp, n, 16))
-	}
-	if n <= 0 {
-		return points
-	}
-
-	// 解析响应
-	values, err := parseReadResponse(resp[:n], byte(devAddr))
+	values, err := modbusrtu.ReadRegisters(serialTransceive, byte(devAddr), FUNC_CODE_READ, startAddr, totalLength, 1000, debug, 16, logf)
 	if err != nil {
-		if debug {
-			logf("parse err=%v", err)
-		}
 		return points
 	}
 
@@ -224,43 +212,10 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 
 // 串口发送接收 (通用)
 func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
-	if len(req) == 0 || respLen <= 0 {
-		return nil, 0
-	}
-
-	reqMem := pdk.AllocateBytes(req)
-	defer reqMem.Free()
-	respMem := pdk.Allocate(respLen)
-	defer respMem.Free()
-
-	n := int(serial_transceive(
-		reqMem.Offset(), uint64(len(req)),
-		respMem.Offset(), uint64(respLen),
-		uint64(timeoutMs),
-	))
-	if n <= 0 {
-		return nil, n
-	}
-	if n > respLen {
-		n = respLen
-	}
-
-	resp := make([]byte, n)
-	mem := pdk.NewMemory(respMem.Offset(), uint64(n))
-	mem.Load(resp)
-	return resp, n
+	return hostio.TransceiveBytes(callSerialTransceive, req, respLen, timeoutMs)
 }
 
 // 构建 Modbus RTU 读请求帧 (通用)
-func buildReadFrame(addr byte, start uint16, qty uint16) []byte {
-	return modbusrtu.BuildReadFrame(addr, FUNC_CODE_READ, start, qty)
-}
-
-// 解析 Modbus RTU 读响应 (通用)
-func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
-	return modbusrtu.ParseReadResponse(data, addr, FUNC_CODE_READ)
-}
-
 // =============================================================================
 // 【固定不变】工具函数
 // =============================================================================
@@ -292,11 +247,6 @@ func outputJSON(v interface{}) {
 // 调试日志 (通用)
 func logf(format string, args ...interface{}) {
 	tinydrv.Logf(format, args...)
-}
-
-// 十六进制预览 (通用)
-func hexPreview(b []byte, n int, max int) string {
-	return tinydrv.HexPreview(b, n, max)
 }
 
 func main() {}

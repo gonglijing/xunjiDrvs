@@ -13,7 +13,7 @@ package main
 import (
 	"strconv"
 
-	pdk "github.com/extism/go-pdk"
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/hostio"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbustcp"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
 )
@@ -24,6 +24,10 @@ import (
 //
 //go:wasmimport extism:host/user tcp_transceive
 func tcp_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
+
+func callTCPTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
+	return tcp_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
+}
 
 // =============================================================================
 // 【固定不变】配置结构（网关传入）
@@ -336,54 +340,15 @@ func readU32(values []uint16, startReg uint16, targetReg uint16) (uint32, bool) 
 // 【固定不变】Modbus TCP 通信函数
 // =============================================================================
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16) []uint16 {
-	req := buildReadRequest(devAddr, startReg, count)
-	resp := make([]byte, 256)
-
-	n := tcpTransceive(req, resp, 1000)
-	if n < 9 {
-		return nil
-	}
-
-	values, err := parseReadResponse(resp[:n], devAddr)
-	if err != nil || len(values) < int(count) {
+	values, err := modbustcp.ReadRegisters(tcpTransceive, devAddr, FUNC_CODE_READ, startReg, count, 1000, 256)
+	if err != nil {
 		return nil
 	}
 	return values
 }
 
 func tcpTransceive(req []byte, resp []byte, timeoutMs int) int {
-	if len(req) == 0 || len(resp) == 0 {
-		return 0
-	}
-
-	reqMem := pdk.AllocateBytes(req)
-	defer reqMem.Free()
-	respMem := pdk.Allocate(len(resp))
-	defer respMem.Free()
-
-	n := int(tcp_transceive(
-		reqMem.Offset(), uint64(len(req)),
-		respMem.Offset(), uint64(len(resp)),
-		uint64(timeoutMs),
-	))
-	if n <= 0 {
-		return n
-	}
-	if n > len(resp) {
-		n = len(resp)
-	}
-
-	mem := pdk.NewMemory(respMem.Offset(), uint64(n))
-	mem.Load(resp[:n])
-	return n
-}
-
-func buildReadRequest(addr byte, startReg uint16, count uint16) []byte {
-	return modbustcp.BuildReadRequest(addr, FUNC_CODE_READ, startReg, count)
-}
-
-func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
-	return modbustcp.ParseReadResponse(data, addr, FUNC_CODE_READ)
+	return hostio.TransceiveInto(callTCPTransceive, req, resp, timeoutMs)
 }
 
 // =============================================================================

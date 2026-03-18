@@ -18,13 +18,17 @@ package main
 import (
 	"strconv"
 
-	pdk "github.com/extism/go-pdk"
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/hostio"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbusrtu"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
 )
 
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
+
+func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
+	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
+}
 
 type DriverConfig struct {
 	DeviceAddress int    `json:"device_address"`
@@ -143,63 +147,15 @@ func makePoint(def pointDef, raw int64) DriverPoint {
 }
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
-	req := buildReadFrame(devAddr, startReg, count)
-	if debug {
-		logf("rtu req=% X", req)
-	}
-
-	resp, n := serialTransceive(req, int(count)*2+5, 1000)
-	if debug {
-		logf("rtu n=%d resp=%s", n, hexPreview(resp, n, 16))
-	}
-	if n <= 0 {
-		return nil
-	}
-
-	values, err := parseReadResponse(resp[:n], devAddr)
+	values, err := modbusrtu.ReadRegisters(serialTransceive, devAddr, FUNC_CODE_READ_INPUT, startReg, count, 1000, debug, 16, logf)
 	if err != nil {
-		if debug {
-			logf("parse err=%v", err)
-		}
 		return nil
 	}
 	return values
 }
 
 func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
-	if len(req) == 0 || respLen <= 0 {
-		return nil, 0
-	}
-
-	reqMem := pdk.AllocateBytes(req)
-	defer reqMem.Free()
-	respMem := pdk.Allocate(respLen)
-	defer respMem.Free()
-
-	n := int(serial_transceive(
-		reqMem.Offset(), uint64(len(req)),
-		respMem.Offset(), uint64(respLen),
-		uint64(timeoutMs),
-	))
-	if n <= 0 {
-		return nil, n
-	}
-	if n > respLen {
-		n = respLen
-	}
-
-	resp := make([]byte, n)
-	mem := pdk.NewMemory(respMem.Offset(), uint64(n))
-	mem.Load(resp)
-	return resp, n
-}
-
-func buildReadFrame(addr byte, start uint16, qty uint16) []byte {
-	return modbusrtu.BuildReadFrame(addr, FUNC_CODE_READ_INPUT, start, qty)
-}
-
-func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
-	return modbusrtu.ParseReadResponse(data, addr, FUNC_CODE_READ_INPUT)
+	return hostio.TransceiveBytes(callSerialTransceive, req, respLen, timeoutMs)
 }
 
 func getConfig() DriverConfig {
@@ -225,10 +181,6 @@ func outputJSON(v interface{}) {
 
 func logf(format string, args ...interface{}) {
 	tinydrv.Logf(format, args...)
-}
-
-func hexPreview(b []byte, n int, max int) string {
-	return tinydrv.HexPreview(b, n, max)
 }
 
 func main() {}

@@ -1,10 +1,20 @@
 package modbusrtu
 
+import (
+	"strconv"
+
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
+)
+
 type simpleErr string
 
 func (e simpleErr) Error() string { return string(e) }
 
 func errf(s string) error { return simpleErr(s) }
+
+type TransceiveFunc func(req []byte, respLen int, timeoutMs int) ([]byte, int)
+
+type LoggerFunc func(format string, args ...interface{})
 
 func BuildReadFrame(addr byte, funcCode byte, start uint16, qty uint16) []byte {
 	req := make([]byte, 8)
@@ -18,8 +28,14 @@ func BuildReadFrame(addr byte, funcCode byte, start uint16, qty uint16) []byte {
 }
 
 func ParseReadResponse(data []byte, addr byte, funcCode byte) ([]uint16, error) {
-	if len(data) < 5 || data[0] != addr || data[1] != funcCode {
+	if len(data) < 5 || data[0] != addr {
 		return nil, errf("invalid response")
+	}
+	if len(data) >= 3 && data[1] == (funcCode|0x80) {
+		return nil, errf("modbus exception code=" + strconv.Itoa(int(data[2])))
+	}
+	if data[1] != funcCode {
+		return nil, errf("unexpected function code")
 	}
 	byteCnt := int(data[2])
 	if byteCnt < 2 || len(data) < 3+byteCnt+2 {
@@ -32,6 +48,47 @@ func ParseReadResponse(data []byte, addr byte, funcCode byte) ([]uint16, error) 
 	values := make([]uint16, byteCnt/2)
 	for i := 0; i < len(values); i++ {
 		values[i] = uint16(data[3+i*2])<<8 | uint16(data[4+i*2])
+	}
+	return values, nil
+}
+
+func ReadRegisters(
+	transceive TransceiveFunc,
+	addr byte,
+	funcCode byte,
+	startReg uint16,
+	count uint16,
+	timeoutMs int,
+	debug bool,
+	previewMax int,
+	logf LoggerFunc,
+) ([]uint16, error) {
+	req := BuildReadFrame(addr, funcCode, startReg, count)
+	if debug && logf != nil {
+		logf("rtu req fc=%02X % X", funcCode, req)
+	}
+
+	resp, n := transceive(req, int(count)*2+5, timeoutMs)
+	if debug && logf != nil {
+		logf("rtu fc=%02X n=%d resp=%s", funcCode, n, tinydrv.HexPreview(resp, n, previewMax))
+	}
+	if n <= 0 {
+		return nil, errf("read timeout")
+	}
+
+	values, err := ParseReadResponse(resp[:n], addr, funcCode)
+	if err != nil {
+		if debug && logf != nil {
+			logf("parse err=%v", err)
+		}
+		return nil, err
+	}
+	if len(values) < int(count) {
+		err := errf("insufficient register data")
+		if debug && logf != nil {
+			logf("parse err=%v", err)
+		}
+		return nil, err
 	}
 	return values, nil
 }
