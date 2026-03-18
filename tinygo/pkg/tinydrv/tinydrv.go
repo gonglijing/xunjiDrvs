@@ -67,6 +67,42 @@ type ErrorResponse struct {
 	Error   string `json:"error"`
 }
 
+// NewHandleSuccess 统一构造 handle 成功返回。
+//
+// 约定上 handle 无论哪个驱动，外层都应保持 success/productKey/points/error 这组字段。
+// 成功时 points 至少返回空数组而不是 null，便于宿主和前端按固定结构消费。
+func NewHandleSuccess(productKey string, points []Point) HandleResponse {
+	if points == nil {
+		points = make([]Point, 0)
+	}
+	return HandleResponse{
+		Success:    true,
+		ProductKey: strings.TrimSpace(productKey),
+		Points:     points,
+	}
+}
+
+// NewHandleError 统一构造 handle 失败返回。
+//
+// 这里故意不再单独走只有 success/error 的极简结构，
+// 而是保持和成功返回相同的外层字段，减少宿主侧分支判断。
+func NewHandleError(productKey string, errText string) HandleResponse {
+	return HandleResponse{
+		Success:    false,
+		ProductKey: strings.TrimSpace(productKey),
+		Points:     make([]Point, 0),
+		Error:      strings.TrimSpace(errText),
+	}
+}
+
+func OutputHandleSuccess(productKey string, points []Point) {
+	OutputJSON(NewHandleSuccess(productKey, points))
+}
+
+func OutputHandleError(productKey string, errText string) {
+	OutputJSON(NewHandleError(productKey, errText))
+}
+
 // ParseConfigMap 解析 Extism 输入中的 config 映射。
 //
 // 网关侧通常会把插件入参包装为一个更大的 JSON 对象，而驱动实际最常关心的

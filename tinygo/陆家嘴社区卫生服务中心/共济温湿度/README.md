@@ -21,11 +21,20 @@
 - 批量读取：`0~2`（共 3 个寄存器）
 - 映射顺序：`temperature` → `humidity` → `dewtemperature`
 
+## 写入支持
+
+当前驱动为只读驱动。
+
+- 返回点位的 `rw` 全部为 `R`
+- 如果传入 `config.func_name=write`，驱动会明确返回“不支持写入”
+- FSU 侧应根据 `rw` 判断为只读点位，不展示写入口
+
 ## 返回示例 JSON
 
 ```json
 {
   "success": true,
+  "productKey": "ljzchc_gongji_th",
   "points": [
     {"field_name": "temperature", "value": "26.3", "rw": "R", "unit": "℃", "label": "温度"},
     {"field_name": "humidity", "value": "58.4", "rw": "R", "unit": "%", "label": "湿度"},
@@ -37,7 +46,7 @@
 ## 编译
 
 ```bash
-cd drvs/陆家嘴社区卫生服务中心/共济温湿度
+cd /Users/mac/workspace/xunji/fsu/drvs/tinygo/陆家嘴社区卫生服务中心/共济温湿度
 make gongji_th.wasm
 ```
 

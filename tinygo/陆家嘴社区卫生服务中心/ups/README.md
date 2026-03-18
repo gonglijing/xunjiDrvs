@@ -32,11 +32,20 @@
 - 输入段：`109~112`（读取 `IH`、`IUR`、`IUS`、`IOT`）
 - 电池段：`100~101`（读取 `qos`、`ltime`）
 
+## 写入支持
+
+当前驱动为只读驱动。
+
+- 返回点位的 `rw` 全部为 `R`
+- 如果传入 `config.func_name=write`，驱动会明确返回“不支持写入”
+- FSU 侧应把这些点位视为只读测点
+
 ## 返回示例 JSON
 
 ```json
 {
   "success": true,
+  "productKey": "ljzchc_ups_kstar",
   "points": [
     {"field_name": "OUR", "value": "220.1", "rw": "R", "unit": "V", "label": "R相输出电压"},
     {"field_name": "OH", "value": "50.0", "rw": "R", "unit": "Hz", "label": "输出频率"},
@@ -50,7 +59,7 @@
 ## 编译
 
 ```bash
-cd drvs/陆家嘴卫生活动中心/ups
+cd /Users/mac/workspace/xunji/fsu/drvs/tinygo/陆家嘴社区卫生服务中心/ups
 make ups_kstar.wasm
 ```
 

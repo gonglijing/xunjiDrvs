@@ -49,7 +49,6 @@ struct DriverResponse {
     success: bool,
     #[serde(rename = "productKey")]
     product_key: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     points: Vec<DriverPoint>,
     #[serde(skip_serializing_if = "String::is_empty")]
     error: String,

@@ -31,11 +31,20 @@
 - 单体温度：`800~839`（40个寄存器）
 - 单体内阻：`1200~1239`（40个寄存器）
 
+## 写入支持
+
+当前驱动为只读驱动。
+
+- 返回点位的 `rw` 全部为 `R`
+- 如果传入 `config.func_name=write`，驱动会明确返回“不支持写入”
+- FSU 侧应按只读设备处理
+
 ## 返回示例 JSON
 
 ```json
 {
   "success": true,
+  "productKey": "ljzchc_gaote_battery_gateway",
   "points": [
     {"field_name": "TU", "value": "53.2", "rw": "R", "unit": "V", "label": "组电压"},
     {"field_name": "TI", "value": "1.257", "rw": "R", "unit": "A", "label": "组电流"},
@@ -50,7 +59,7 @@
 ## 编译
 
 ```bash
-cd drvs/陆家嘴社区卫生服务中心/高特电池网关
+cd /Users/mac/workspace/xunji/fsu/drvs/tinygo/陆家嘴社区卫生服务中心/高特电池网关
 make gaote_battery_gateway.wasm
 ```
 

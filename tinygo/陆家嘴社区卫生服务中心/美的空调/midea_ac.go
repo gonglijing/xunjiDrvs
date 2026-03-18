@@ -117,7 +117,7 @@ var writablePointSpecs = []writablePointSpec{
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: "panic"})
+			tinydrv.OutputHandleError(DriverProductKey, "panic")
 		}
 	}()
 
@@ -125,24 +125,15 @@ func handle() int32 {
 	if tinydrv.IsWriteFunc(cfg.FuncName) {
 		point, err := writePoint(cfg.DeviceAddress, cfg.FieldName, cfg.Value, cfg.Debug)
 		if err != nil {
-			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: err.Error()})
+			tinydrv.OutputHandleError(DriverProductKey, err.Error())
 			return 0
 		}
-		tinydrv.OutputJSON(HandleResponse{
-			Success:    true,
-			ProductKey: DriverProductKey,
-			Points:     []DriverPoint{point},
-		})
+		tinydrv.OutputHandleSuccess(DriverProductKey, []DriverPoint{point})
 		return 0
 	}
 
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
-
-	tinydrv.OutputJSON(HandleResponse{
-		Success:    true,
-		ProductKey: DriverProductKey,
-		Points:     points,
-	})
+	tinydrv.OutputHandleSuccess(DriverProductKey, points)
 	return 0
 }
 

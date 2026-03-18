@@ -41,11 +41,20 @@
 - 功率段：`621~637`
 - 电能段：`848~873`
 
+## 写入支持
+
+当前驱动为只读驱动。
+
+- 返回点位的 `rw` 全部为 `R`
+- 如果传入 `config.func_name=write`，驱动会明确返回“不支持写入”
+- FSU 侧应按只读设备处理
+
 ## 返回示例 JSON
 
 ```json
 {
   "success": true,
+  "productKey": "ljzchc_rack_cabinet",
   "points": [
     {"field_name": "UA1", "value": "220.6", "rw": "R", "unit": "V", "label": "市电总输入A"},
     {"field_name": "MainsACurr", "value": "12.5", "rw": "R", "unit": "A", "label": "市电输入A相电流"},
@@ -59,7 +68,7 @@
 ## 编译
 
 ```bash
-cd drvs/陆家嘴社区卫生服务中心/列头柜
+cd /Users/mac/workspace/xunji/fsu/drvs/tinygo/陆家嘴社区卫生服务中心/列头柜
 make rack_cabinet.wasm
 ```
 

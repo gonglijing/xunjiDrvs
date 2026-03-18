@@ -31,14 +31,23 @@
 - 单次请求寄存器数量始终不超过 `50`
 - 每个请求按以下顺序自动回退：
   1. 以配置地址读取（功能码 `0x03`，失败再试 `0x04`）
-  2. 改用 `0-based` 地址（`start-1`）再次读取（同样 `0x03`→`0x04`）
-  3. 若块读取仍失败，自动二分拆分，直至单寄存器读取，避免整段失败导致 `points=[]`
+ 2. 改用 `0-based` 地址（`start-1`）再次读取（同样 `0x03`→`0x04`）
+ 3. 若块读取仍失败，自动二分拆分，直至单寄存器读取，避免整段失败导致 `points=[]`
+
+## 写入支持
+
+当前驱动为只读驱动。
+
+- 返回点位的 `rw` 全部为 `R`
+- 如果传入 `config.func_name=write`，驱动会明确返回“不支持写入”
+- FSU 侧应按只读设备处理这些消防点位
 
 ## 返回示例 JSON
 
 ```json
 {
   "success": true,
+  "productKey": "ljzchc_qingniao_fire",
   "points": [
     {"field_name": "yg0112", "value": "0", "rw": "R", "unit": "", "label": "1层走道烟感"},
     {"field_name": "sb0132", "value": "0", "rw": "R", "unit": "", "label": "1层走道手报"},
@@ -50,7 +59,7 @@
 ## 编译
 
 ```bash
-cd drvs/陆家嘴社区卫生服务中心/青鸟消防
+cd /Users/mac/workspace/xunji/fsu/drvs/tinygo/陆家嘴社区卫生服务中心/青鸟消防
 make qingniao_fire.wasm
 ```
 

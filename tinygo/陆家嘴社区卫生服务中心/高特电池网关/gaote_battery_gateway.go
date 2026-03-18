@@ -114,7 +114,7 @@ var resistancePointMetas = buildIndexedPointMetas("IR", "电池", "#内阻", REG
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: "panic"})
+			tinydrv.OutputHandleError(DriverProductKey, "panic")
 		}
 	}()
 
@@ -124,11 +124,7 @@ func handle() int32 {
 	}
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
-	tinydrv.OutputJSON(HandleResponse{
-		Success:    true,
-		ProductKey: DriverProductKey,
-		Points:     points,
-	})
+	tinydrv.OutputHandleSuccess(DriverProductKey, points)
 	return 0
 }
 
@@ -137,7 +133,7 @@ func writeNotSupported(fieldName string) int32 {
 	if fieldName != "" {
 		errText += ": " + fieldName
 	}
-	tinydrv.OutputJSON(ErrorResponse{Success: false, Error: errText})
+	tinydrv.OutputHandleError(DriverProductKey, errText)
 	return 0
 }
 
