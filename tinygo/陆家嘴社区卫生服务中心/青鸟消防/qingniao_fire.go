@@ -79,6 +79,8 @@ type RegisterRange struct {
 }
 
 var pointConfig = []PointConfig{
+	// 第一段：257~317，对应 1 层主要探测点和联动点。
+	// 这一段以烟感为主，后部混有手报、消报、水流指示、信号阀、声光等消防常见点型。
 	{Field: "yg0101", Address: 257, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层心电烟感"},
 	{Field: "yg0102", Address: 258, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层心电烟感"},
 	{Field: "yg0103", Address: 259, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层外科烟感"},
@@ -140,6 +142,9 @@ var pointConfig = []PointConfig{
 	{Field: "sg013b", Address: 315, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层声光"},
 	{Field: "sg013c", Address: 316, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层声光"},
 	{Field: "sg013d", Address: 317, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层声光"},
+
+	// 第二段：318~364，对应 2 层门诊与公共区。
+	// 这里仍以烟感为主，中间穿插温感、手报、消报、信号阀、水流指示和声光。
 	{Field: "yg013e", Address: 318, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层中医诊室烟感"},
 	{Field: "yg013f", Address: 319, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层中医诊室烟感"},
 	{Field: "yg0140", Address: 320, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层中医诊室烟感"},
@@ -187,6 +192,9 @@ var pointConfig = []PointConfig{
 	{Field: "sg016a", Address: 362, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层声光"},
 	{Field: "sg016b", Address: 363, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层声光"},
 	{Field: "sg016c", Address: 364, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层声光"},
+
+	// 第三段：365~391，回到 1 层后场/辅助区域。
+	// 这一段覆盖档案室、餐厅、机房、厨房和走道等位置，仍属于 1 层点位，但功能区不同。
 	{Field: "yg016d", Address: 365, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层杂物间烟感"},
 	{Field: "yg016e", Address: 366, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层档案室烟感"},
 	{Field: "yg016f", Address: 367, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层档案室烟感"},
@@ -214,6 +222,9 @@ var pointConfig = []PointConfig{
 	{Field: "xhf0185", Address: 389, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层走道信号阀"},
 	{Field: "slzs0186", Address: 390, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层走道水流指示"},
 	{Field: "sg0187", Address: 391, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "1层走道声光"},
+
+	// 第四段：392~416，对应 2 层另一组连续点位。
+	// 这部分主要是 2 层办公室、计划免疫区、冷库和走道的探测/联动设备。
 	{Field: "yg0188", Address: 392, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层办公室烟感"},
 	{Field: "yg0189", Address: 393, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层办公室烟感"},
 	{Field: "yg018a", Address: 394, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层测智室烟感"},
@@ -239,6 +250,9 @@ var pointConfig = []PointConfig{
 	{Field: "slzs019e", Address: 414, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层走道水流指示"},
 	{Field: "sg019f", Address: 415, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层走道声光"},
 	{Field: "sg01a0", Address: 416, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "2层走道声光"},
+
+	// 第五段：513~540，对应 5 层行政办公区及其公共走道。
+	// 地址跳到 513 说明协议中间存在未使用区间，因此这里保留原始地址，便于对照现场数据库。
 	{Field: "yg0201", Address: 513, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "5层院长办公室烟感"},
 	{Field: "yg0202", Address: 514, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "5层副院长办公室烟感"},
 	{Field: "yg0203", Address: 515, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "5层示范性教育室烟感"},
@@ -267,6 +281,9 @@ var pointConfig = []PointConfig{
 	{Field: "xb021a", Address: 538, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "5层走道消报"},
 	{Field: "sl021b", Address: 539, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "5层走道水流"},
 	{Field: "xhf021c", Address: 540, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "5层走道信号阀"},
+
+	// 第六段：541~581，对应 4 层诊室、口腔区和走道联动设备。
+	// 这一段前半部分是大量烟感，后半部分逐渐切换到手报、消报、水流、声光等公共点位。
 	{Field: "yg021d", Address: 541, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "4层储物间烟感"},
 	{Field: "yg021e", Address: 542, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "4层诊室烟感"},
 	{Field: "yg021f", Address: 543, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "4层诊室烟感"},
@@ -308,6 +325,9 @@ var pointConfig = []PointConfig{
 	{Field: "sl0243", Address: 579, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "4层走道水流"},
 	{Field: "sg0244", Address: 580, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "4层走道声光"},
 	{Field: "sg0245", Address: 581, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "4层走道声光"},
+
+	// 第七段：582~627，对应 3 层病房区及公共走道。
+	// 这是最后一段连续地址，前部是病房/办公室烟感，尾部是手报、消报、水流、蝶阀和声光。
 	{Field: "yg0246", Address: 582, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "3层病房烟感"},
 	{Field: "yg0247", Address: 583, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "3层病房烟感"},
 	{Field: "yg0248", Address: 584, Scale: 1, Decimals: 0, RW: "R", Unit: "", Label: "3层病房烟感"},

@@ -105,6 +105,8 @@ const (
 	switchMask = 0x8000
 )
 
+// 电压段：
+// 这一段只放最核心的输入/输出电压，属于列头柜供配电拓扑里的第一层概览量。
 var voltagePointSpecs = []blockPointSpec{
 	{Index: 0, Field: "UA1", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "市电总输入A"},
 	{Index: 1, Field: "UB1", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "市电总输入B"},
@@ -112,6 +114,9 @@ var voltagePointSpecs = []blockPointSpec{
 	{Index: 3, Field: "Uups", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "UPS输出"},
 }
 
+// 电流段：
+// 前半段是市电输入与 UPS 输入/输出相电流，后半段扩展到各路 PDU 支路电流。
+// 用同一个数组描述，是因为协议文档本身就是一段连续寄存器块。
 var currentPointSpecs = []blockPointSpec{
 	{Index: 0, Field: "MainsACurr", Scale: 0.1, Decimals: 1, RW: "R", Unit: "A", Label: "市电输入A相电流"},
 	{Index: 1, Field: "MainsBCurr", Scale: 0.1, Decimals: 1, RW: "R", Unit: "A", Label: "市电输入B相电流"},
@@ -136,6 +141,8 @@ var currentPointSpecs = []blockPointSpec{
 	{Index: 20, Field: "UpsPdu7Curr", Scale: 0.1, Decimals: 1, RW: "R", Unit: "A", Label: "U电PDU-7电流"},
 }
 
+// 功率段：
+// 结构与电流段基本平行，先三相总功率，再展开到各个市电/U 电 PDU 的分路功率。
 var powerPointSpecs = []blockPointSpec{
 	{Index: 0, Field: "MainsPA", Scale: 0.1, Decimals: 1, RW: "R", Unit: "kW", Label: "市电输出A相功率"},
 	{Index: 1, Field: "MainsPB", Scale: 0.1, Decimals: 1, RW: "R", Unit: "kW", Label: "市电输出B相功率"},
@@ -156,6 +163,9 @@ var powerPointSpecs = []blockPointSpec{
 	{Index: 16, Field: "UpsPdu7P", Scale: 0.1, Decimals: 1, RW: "R", Unit: "kW", Label: "U电PDU7功率"},
 }
 
+// 电能段：
+// 电能值跨 2 个寄存器，且文档中的寄存器顺序和业务展示顺序并不完全一致，
+// 因此这里显式记录真实寄存器地址，而不是只记块内下标。
 var energyPointSpecs = []energyPointSpec{
 	{Register: 854, Field: "MainsEPA", Scale: 0.1, Decimals: 1, RW: "R", Unit: "kWh", Label: "市电输出A相电能"},
 	{Register: 856, Field: "MainsEPB", Scale: 0.1, Decimals: 1, RW: "R", Unit: "kWh", Label: "市电输出B相电能"},
@@ -169,6 +179,8 @@ var energyPointSpecs = []energyPointSpec{
 	{Register: 872, Field: "MainsPdu7EP", Scale: 0.1, Decimals: 1, RW: "R", Unit: "kWh", Label: "市电PDU7电能"},
 }
 
+// 开关段：
+// 这一段不是工程量，而是状态位集合。这里只挑监控系统真正关心的总开关和各路 PDU 开关。
 var switchPointSpecs = []switchPointSpec{
 	{Index: 0, Field: "MSS", Label: "市电总输入开关状态"},
 	{Index: 3, Field: "MainsPdu1Switch", Label: "市电PDU1开关状态"},

@@ -75,7 +75,13 @@ const (
 // 【用户修改】点表配置
 // =============================================================================
 var pointConfig = []PointConfig{
+	// 液位段：
+	// 液位值占用 2 个寄存器，是这个设备最核心的业务点位。
+	// 后续计算会把原始压力/高度相关值转换成现场需要展示的液位工程量。
 	{Field: "level", Address: REG_LEVEL, Length: 2, Decimals: 3, RW: "R", Unit: "", Label: "液位"},
+
+	// 温度段：
+	// 温度是附带环境量，只占 1 个寄存器，但仍保留在同一张点表里，便于统一维护。
 	{Field: "wtemp", Address: REG_WTEMP, Length: 1, Decimals: 2, RW: "R", Unit: "°C", Label: "温度"},
 }
 

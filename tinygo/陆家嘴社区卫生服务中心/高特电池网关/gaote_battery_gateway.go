@@ -94,8 +94,16 @@ const (
 	REG_IR_LEN   = 40
 )
 
+// 单体电压段：协议把 40 节电池电压按连续地址排布成一整段，
+// 因此这里一次性生成 U01~U40 元数据，维护时只需关注总节数和命名规则。
 var voltagePointMetas = buildIndexedPointMetas("U", "电池", "#电压", REG_U_LEN, 3, "R", "V")
+
+// 单体温度段：字段名仍保持 T01~T40，与现场点表和历史系统中的叫法一致，
+// 这样排查单节异常时，可以直接按“第几节电池温度”去比对。
 var temperaturePointMetas = buildIndexedPointMetas("T", "电池", "#温度", REG_T_LEN, 1, "R", "℃")
+
+// 单体内阻段：内阻与电压/温度同样都是 40 节一一对应，
+// 独立成单独元数据数组后，后续若某一段寄存器发生偏移，只需要改对应一段。
 var resistancePointMetas = buildIndexedPointMetas("IR", "电池", "#内阻", REG_IR_LEN, 3, "R", "Ω")
 
 // =============================================================================
@@ -164,21 +172,24 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 		points = append(points, makePointValue("T", float64(tRaw)/10.0-40.0, 1, "R", "℃", "环境温度"))
 	}
 
-	// 电池1~40电压 U01~U40: v/1000
+	// 单体电压段：
+	// 这一段是最基础的电池健康数据，每个寄存器对应一节电池的瞬时电压。
 	if values := readMultipleRegs(byte(devAddr), REG_U_START, REG_U_LEN, debug); values != nil && len(values) >= REG_U_LEN {
 		points = appendIndexedPoints(points, values, voltagePointMetas, func(raw uint16) float64 {
 			return float64(raw) / 1000.0
 		})
 	}
 
-	// 电池1~40温度 T01~T40: v/10-40
+	// 单体温度段：
+	// 协议原始值需要先除以 10 再减 40，这是设备文档给出的补码式偏移换算。
 	if values := readMultipleRegs(byte(devAddr), REG_T_START, REG_T_LEN, debug); values != nil && len(values) >= REG_T_LEN {
 		points = appendIndexedPoints(points, values, temperaturePointMetas, func(raw uint16) float64 {
 			return float64(raw)/10.0 - 40.0
 		})
 	}
 
-	// 电池1~40内阻 IR01~IR40: v/1000
+	// 单体内阻段：
+	// 这组数据通常和电压一起用来判断电池老化，因此保留与单体编号完全一致的输出顺序。
 	if values := readMultipleRegs(byte(devAddr), REG_IR_START, REG_IR_LEN, debug); values != nil && len(values) >= REG_IR_LEN {
 		points = appendIndexedPoints(points, values, resistancePointMetas, func(raw uint16) float64 {
 			return float64(raw) / 1000.0

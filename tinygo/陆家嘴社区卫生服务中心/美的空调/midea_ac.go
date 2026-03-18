@@ -143,11 +143,16 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	// 空调协议的寄存器天然分成几个离散区块。
 	// 与其把所有地址拼成一个大区间读取，不如按文档分段读取，更容易核对和维护。
 	if values := readMultipleRegs(byte(devAddr), REG_TEMSET, 3, debug); values != nil {
+		// 设定值段：
+		// 0~2 这一小段同时包含温度设点和湿度设点，中间保留了一个未使用寄存器，
+		// 所以这里按协议原始偏移直接取 values[0] 和 values[2]。
 		points = append(points, makePoint("TEMSET", int(values[0]), 0.1, 1, "R", "℃", "温度设点"))
 		points = append(points, makePoint("HUMSET", int(values[2]), 0.1, 1, "R", "%", "湿度设点"))
 	}
 
 	if values := readMultipleRegs(byte(devAddr), REG_IHTAV, 4, debug); values != nil {
+		// 报警阈值段：
+		// 这一段集中保存温湿度上下限，属于设备参数类点位，语义上应该和实时测量值分开。
 		points = append(points, makePoint("IHTAV", int(values[0]), 0.1, 1, "R", "℃", "室内高温报警值"))
 		points = append(points, makePoint("ILTAV", int(values[1]), 0.1, 1, "R", "℃", "室内低温报警值"))
 		points = append(points, makePoint("HHAV", int(values[2]), 0.1, 1, "R", "%", "高湿度报警值"))
@@ -155,11 +160,15 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	}
 
 	if values := readMultipleRegs(byte(devAddr), REG_TEM, 2, debug); values != nil {
+		// 实时测量段：
+		// 48~49 这两个寄存器是现场环境当前值，也是网关采集最常用的数据。
 		points = append(points, makePoint("TEM", int(values[0]), 0.1, 1, "R", "℃", "环境温度"))
 		points = append(points, makePoint("HUM", int(values[1]), 0.1, 1, "R", "%", "环境湿度"))
 	}
 
 	if val := readSingleReg(byte(devAddr), REG_ADD, debug); val >= 0 {
+		// 设备标识段：
+		// 地址寄存器单独读，既避免把中间无关地址一起带上，也让这个辅助性点位和业务点位区分开。
 		points = append(points, makePoint("ADD", int(val), 1, 1, "R", "", "设备地址"))
 	}
 
