@@ -212,6 +212,9 @@ func handle() int32 {
 	}()
 
 	cfg := getConfig()
+	if tinydrv.IsWriteFunc(cfg.FuncName) {
+		return writeNotSupported(cfg.FieldName)
+	}
 	points := readAllPoints(cfg.DeviceAddress)
 
 	tinydrv.OutputJSON(HandleResponse{
@@ -219,6 +222,15 @@ func handle() int32 {
 		ProductKey: DriverProductKey,
 		Points:     points,
 	})
+	return 0
+}
+
+func writeNotSupported(fieldName string) int32 {
+	errText := "列头柜驱动当前只确认了开关状态读取，未启用写寄存器"
+	if fieldName != "" {
+		errText += ": " + fieldName
+	}
+	tinydrv.OutputJSON(ErrorResponse{Success: false, Error: errText})
 	return 0
 }
 

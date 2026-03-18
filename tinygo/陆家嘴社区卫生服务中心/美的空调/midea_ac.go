@@ -122,7 +122,7 @@ func handle() int32 {
 	}()
 
 	cfg := getConfig()
-	if isWriteFunc(cfg.FuncName) {
+	if tinydrv.IsWriteFunc(cfg.FuncName) {
 		point, err := writePoint(cfg.DeviceAddress, cfg.FieldName, cfg.Value, cfg.Debug)
 		if err != nil {
 			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: err.Error()})
@@ -265,10 +265,6 @@ func makePointValue(field string, value float64, decimals int, rw, unit, label s
 		Unit:      unit,
 		Label:     label,
 	}
-}
-
-func isWriteFunc(funcName string) bool {
-	return strings.EqualFold(strings.TrimSpace(funcName), "write")
 }
 
 func findWritablePoint(fieldName string) (writablePointSpec, bool) {

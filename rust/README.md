@@ -18,5 +18,7 @@
 - `handle` / `describe` / `version`
 - `serial_transceive` 宿主导入
 - 标准 Modbus RTU 读寄存器请求与 CRC 校验
+- 标准 Modbus RTU `0x06` 单寄存器写请求与响应校验
 - 点表驱动的输出拼装方式
+- `func_name=write` 的单点写入入口
 - 基本单元测试

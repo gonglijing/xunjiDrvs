@@ -117,6 +117,14 @@ func ParseBool(config map[string]string, key string, def bool) bool {
 	return value == "1" || strings.EqualFold(value, "true")
 }
 
+// IsWriteFunc 统一判断一次驱动调用是否是写操作。
+//
+// 大部分驱动只需要区分“正常采集(read/collect)”和“下行写(write)”两条路径，
+// 这里把 trim + ignore-case 的细节收敛起来，避免每个驱动重复实现。
+func IsWriteFunc(funcName string) bool {
+	return strings.EqualFold(strings.TrimSpace(funcName), "write")
+}
+
 // FormatFloat 统一格式化驱动输出中的数值字符串。
 // 单独收敛到公共包后，驱动文件里不必再重复一行 strconv.FormatFloat。
 func FormatFloat(val float64, decimals int) string {

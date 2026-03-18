@@ -396,6 +396,9 @@ func handle() int32 {
 	}()
 
 	cfg := getConfig()
+	if tinydrv.IsWriteFunc(cfg.FuncName) {
+		return writeNotSupported(cfg.FieldName)
+	}
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
 	tinydrv.OutputJSON(HandleResponse{
@@ -403,6 +406,15 @@ func handle() int32 {
 		ProductKey: DriverProductKey,
 		Points:     points,
 	})
+	return 0
+}
+
+func writeNotSupported(fieldName string) int32 {
+	errText := "青鸟消防驱动当前仅支持点位采集，不支持写入"
+	if fieldName != "" {
+		errText += ": " + fieldName
+	}
+	tinydrv.OutputJSON(ErrorResponse{Success: false, Error: errText})
 	return 0
 }
 

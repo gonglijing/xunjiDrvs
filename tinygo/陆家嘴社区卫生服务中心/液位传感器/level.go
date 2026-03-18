@@ -111,6 +111,9 @@ func handle() int32 {
 	}()
 
 	cfg := getConfig()
+	if tinydrv.IsWriteFunc(cfg.FuncName) {
+		return writeNotSupported(cfg.FieldName)
+	}
 
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
@@ -119,6 +122,15 @@ func handle() int32 {
 		ProductKey: DriverProductKey,
 		Points:     points,
 	})
+	return 0
+}
+
+func writeNotSupported(fieldName string) int32 {
+	errText := "液位传感器驱动当前仅支持读取，不支持写入"
+	if fieldName != "" {
+		errText += ": " + fieldName
+	}
+	tinydrv.OutputJSON(ErrorResponse{Success: false, Error: errText})
 	return 0
 }
 

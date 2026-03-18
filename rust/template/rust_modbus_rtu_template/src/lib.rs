@@ -4,6 +4,7 @@
 //! 如果你已经有一个 TinyGo 驱动，希望迁移到 Rust，通常只需要替换：
 //! - 点表定义 POINT_CONFIGS
 //! - 功能码常量 FUNC_CODE_READ
+//! - 如果存在下行控制，再替换默认的可写点定义
 //! - read_all_points 中的寄存器换算方式
 //! - DRIVER_PRODUCT_KEY / DRIVER_VERSION
 use extism_pdk::*;
@@ -17,6 +18,7 @@ const DRIVER_NAME: &str = "Rust Modbus RTU Driver Template";
 const DEFAULT_DEVICE_ADDRESS: u8 = 1;
 const DEFAULT_TIMEOUT_MS: u64 = 1000;
 const FUNC_CODE_READ: u8 = 0x04;
+const FUNC_CODE_WRITE_SINGLE: u8 = 0x06;
 
 #[link(wasm_import_module = "extism:host/user")]
 extern "C" {
@@ -94,8 +96,9 @@ struct PointConfig {
 // 模板默认点表故意做得很短，便于阅读：
 // - 三个点刚好落在一段连续寄存器里
 // - 都是单寄存器
+// - 其中前两个点演示“可读可写”，第三个点保持只读
 // - 都遵循“原值 * 0.1”的简单换算
-// 这样迁移真实驱动时，可以先理解整体骨架，再替换成自己的点表。
+// 这样迁移真实驱动时，可以同时对照读取和单点写入两条路径。
 const POINT_CONFIGS: &[PointConfig] = &[
     PointConfig {
         field: "temperature",
@@ -103,7 +106,7 @@ const POINT_CONFIGS: &[PointConfig] = &[
         length: 1,
         scale: 0.1,
         decimals: 1,
-        rw: "R",
+        rw: "RW",
         unit: "℃",
         label: "温度",
     },
@@ -113,7 +116,7 @@ const POINT_CONFIGS: &[PointConfig] = &[
         length: 1,
         scale: 0.1,
         decimals: 1,
-        rw: "R",
+        rw: "RW",
         unit: "%",
         label: "湿度",
     },
@@ -138,19 +141,36 @@ pub fn handle(input: String) -> FnResult<String> {
     let request: DriverInvocationInput = serde_json::from_str(&input)
         .map_err(|err| Error::msg(format!("invalid input json: {err}")))?;
 
-    let response = match read_all_points(&request.config) {
-        Ok(points) => DriverResponse {
-            success: true,
-            product_key: DRIVER_PRODUCT_KEY.to_string(),
-            points,
-            error: String::new(),
-        },
-        Err(error) => DriverResponse {
-            success: false,
-            product_key: DRIVER_PRODUCT_KEY.to_string(),
-            points: Vec::new(),
-            error,
-        },
+    let response = if is_write_func(&request.config) {
+        match write_single_point(&request.config) {
+            Ok(point) => DriverResponse {
+                success: true,
+                product_key: DRIVER_PRODUCT_KEY.to_string(),
+                points: vec![point],
+                error: String::new(),
+            },
+            Err(error) => DriverResponse {
+                success: false,
+                product_key: DRIVER_PRODUCT_KEY.to_string(),
+                points: Vec::new(),
+                error,
+            },
+        }
+    } else {
+        match read_all_points(&request.config) {
+            Ok(points) => DriverResponse {
+                success: true,
+                product_key: DRIVER_PRODUCT_KEY.to_string(),
+                points,
+                error: String::new(),
+            },
+            Err(error) => DriverResponse {
+                success: false,
+                product_key: DRIVER_PRODUCT_KEY.to_string(),
+                points: Vec::new(),
+                error,
+            },
+        }
     };
 
     Ok(serde_json::to_string(&response)
@@ -165,10 +185,14 @@ pub fn describe() -> FnResult<String> {
     data.insert("name".into(), DRIVER_NAME.into());
     data.insert("language".into(), "rust".into());
     data.insert("transport".into(), "serial_transceive".into());
-    data.insert("template".into(), "modbus_rtu_readonly".into());
+    data.insert("template".into(), "modbus_rtu_single_write".into());
     data.insert("device_address".into(), "Modbus 从站地址，默认 1".into());
     data.insert("timeout_ms".into(), "串口超时毫秒，默认 1000".into());
     data.insert("debug".into(), "true/false，可选".into());
+    data.insert("func_name".into(), "read 或 write".into());
+    data.insert("field_name".into(), "write 模式下必填，只能一次写一个字段".into());
+    data.insert("value".into(), "write 模式下必填，传工程量字符串".into());
+    data.insert("writable_fields".into(), writable_fields_text());
 
     Ok(serde_json::to_string(&DescribeResponse {
         success: true,
@@ -256,6 +280,65 @@ fn read_all_points(config: &BTreeMap<String, String>) -> Result<Vec<DriverPoint>
     Ok(points)
 }
 
+fn write_single_point(config: &BTreeMap<String, String>) -> Result<DriverPoint, String> {
+    let device_address = parse_u8_config(config.get("device_address"), DEFAULT_DEVICE_ADDRESS);
+    let timeout_ms = parse_u64_config(config.get("timeout_ms"), DEFAULT_TIMEOUT_MS);
+    let debug = parse_bool_config(config.get("debug"));
+
+    let field_name = config
+        .get("field_name")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "write config missing field_name".to_string())?;
+    let value_text = config
+        .get("value")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "write config missing value".to_string())?;
+
+    let point = find_writable_point(field_name)?;
+    if point.length != 1 {
+        return Err(format!(
+            "writable field {} requires {} registers, template only supports single-register writes",
+            point.field, point.length
+        ));
+    }
+
+    let raw_value = encode_write_value(point, value_text)?;
+    let request_frame = build_write_single_frame(device_address, point.address, raw_value);
+    if debug {
+        debug!("rtu write req={}", bytes_to_hex(&request_frame));
+    }
+
+    let response = serial_roundtrip(&request_frame, 8, timeout_ms)?;
+    if debug {
+        debug!("rtu write resp={}", bytes_to_hex(&response));
+    }
+
+    let (written_register, written_value) =
+        parse_write_single_response(&response, device_address, FUNC_CODE_WRITE_SINGLE)?;
+    if written_register != point.address {
+        return Err(format!(
+            "write register mismatch: expected {}, got {}",
+            point.address, written_register
+        ));
+    }
+    if written_value != raw_value {
+        return Err(format!(
+            "write value mismatch: expected {}, got {}",
+            raw_value, written_value
+        ));
+    }
+
+    Ok(DriverPoint {
+        field_name: point.field.to_string(),
+        value: format_scaled_value(f64::from(written_value) * point.scale, point.decimals),
+        rw: point.rw.to_string(),
+        unit: point.unit.to_string(),
+        label: point.label.to_string(),
+    })
+}
+
 fn build_read_frame(device_address: u8, start_address: u16, quantity: u16) -> Vec<u8> {
     // 组装标准 Modbus RTU 读寄存器请求：
     // [设备地址][功能码][起始地址高][起始地址低][数量高][数量低][CRC低][CRC高]
@@ -266,6 +349,23 @@ fn build_read_frame(device_address: u8, start_address: u16, quantity: u16) -> Ve
         start_address as u8,
         (quantity >> 8) as u8,
         quantity as u8,
+    ];
+    let crc = crc16(&frame);
+    frame.push((crc & 0x00ff) as u8);
+    frame.push((crc >> 8) as u8);
+    frame
+}
+
+fn build_write_single_frame(device_address: u8, register: u16, value: u16) -> Vec<u8> {
+    // 标准 0x06 单寄存器写帧：
+    // [设备地址][功能码][寄存器高][寄存器低][值高][值低][CRC低][CRC高]
+    let mut frame = vec![
+        device_address,
+        FUNC_CODE_WRITE_SINGLE,
+        (register >> 8) as u8,
+        register as u8,
+        (value >> 8) as u8,
+        value as u8,
     ];
     let crc = crc16(&frame);
     frame.push((crc & 0x00ff) as u8);
@@ -316,6 +416,29 @@ fn parse_read_response(
         index += 2;
     }
     Ok(registers)
+}
+
+fn parse_write_single_response(
+    response: &[u8],
+    device_address: u8,
+    function_code: u8,
+) -> Result<(u16, u16), String> {
+    if response.len() < 8 {
+        return Err("write response too short".into());
+    }
+    if response[0] != device_address {
+        return Err("write response device address mismatch".into());
+    }
+    if response[1] != function_code {
+        return Err("write response function code mismatch".into());
+    }
+    if !check_crc(&response[..8]) {
+        return Err("write response crc check failed".into());
+    }
+
+    let register = u16::from(response[2]) << 8 | u16::from(response[3]);
+    let value = u16::from(response[4]) << 8 | u16::from(response[5]);
+    Ok((register, value))
 }
 
 fn serial_roundtrip(
@@ -380,6 +503,59 @@ fn parse_bool_config(value: Option<&String>) -> bool {
                 || normalized == "1"
         })
         .unwrap_or(false)
+}
+
+fn parse_f64_config(value: &str) -> Result<f64, String> {
+    value
+        .trim()
+        .parse::<f64>()
+        .map_err(|err| format!("invalid write value: {err}"))
+}
+
+fn is_write_func(config: &BTreeMap<String, String>) -> bool {
+    config
+        .get("func_name")
+        .map(|value| value.trim().eq_ignore_ascii_case("write"))
+        .unwrap_or(false)
+}
+
+fn writable_fields_text() -> String {
+    POINT_CONFIGS
+        .iter()
+        .filter(|point| point.rw.to_ascii_uppercase().contains('W'))
+        .map(|point| point.field)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn find_writable_point(field_name: &str) -> Result<&'static PointConfig, String> {
+    let normalized = field_name.trim();
+    let point = POINT_CONFIGS
+        .iter()
+        .find(|point| point.field.eq_ignore_ascii_case(normalized))
+        .ok_or_else(|| format!("unsupported writable field: {normalized}"))?;
+
+    if !point.rw.to_ascii_uppercase().contains('W') {
+        return Err(format!("field {} is not writable", point.field));
+    }
+
+    Ok(point)
+}
+
+fn encode_write_value(point: &PointConfig, value_text: &str) -> Result<u16, String> {
+    if point.scale == 0.0 {
+        return Err(format!("field {} has invalid scale 0", point.field));
+    }
+
+    let engineering_value = parse_f64_config(value_text)?;
+    let raw_value = (engineering_value / point.scale).round();
+    if !(0.0..=65535.0).contains(&raw_value) {
+        return Err(format!(
+            "write value out of range for field {}: {}",
+            point.field, engineering_value
+        ));
+    }
+    Ok(raw_value as u16)
 }
 
 fn crc16(data: &[u8]) -> u16 {
@@ -458,6 +634,36 @@ mod tests {
 
         let registers = parse_read_response(&response, 0x01, 0x04).unwrap();
         assert_eq!(registers, vec![0x00FD, 0x01F9]);
+    }
+
+    #[test]
+    fn build_write_single_frame_appends_crc() {
+        let frame = build_write_single_frame(0x01, 0x0010, 0x1234);
+        assert_eq!(frame, vec![0x01, 0x06, 0x00, 0x10, 0x12, 0x34, 0x85, 0x78]);
+    }
+
+    #[test]
+    fn parse_write_single_response_returns_echo() {
+        let mut response = vec![0x01, 0x06, 0x00, 0x10, 0x12, 0x34];
+        let crc = crc16(&response);
+        response.push((crc & 0x00ff) as u8);
+        response.push((crc >> 8) as u8);
+
+        let (register, value) = parse_write_single_response(&response, 0x01, 0x06).unwrap();
+        assert_eq!(register, 0x0010);
+        assert_eq!(value, 0x1234);
+    }
+
+    #[test]
+    fn encode_write_value_rounds_engineering_value() {
+        let point = find_writable_point("temperature").unwrap();
+        assert_eq!(encode_write_value(point, "23.6").unwrap(), 236);
+    }
+
+    #[test]
+    fn find_writable_point_rejects_readonly_field() {
+        let error = find_writable_point("dewtemperature").unwrap_err();
+        assert!(error.contains("not writable"));
     }
 
     #[test]

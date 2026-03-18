@@ -6,10 +6,11 @@
 - 导入宿主提供的 `serial_transceive`
 - 输入使用网关传入的 `config`
 - 输出保持统一的 `success/productKey/points/error` 结构
+- 支持 `func_name=write` 的单点单寄存器写入范式
 
 ## 适用场景
 
-- 你想把现有 TinyGo 只读串口驱动迁移到 Rust
+- 你想把现有 TinyGo 串口驱动迁移到 Rust
 - 你想验证 “Rust 是否也能一次编译，多架构运行”
 - 你需要一个可读性优先、容易改点表的基线工程
 
@@ -40,14 +41,38 @@ drvs/rust/template/rust_modbus_rtu_template/rust_modbus_rtu_template.wasm
 3. `FUNC_CODE_READ`
 4. `POINT_CONFIGS`
 5. `read_all_points` 里的换算逻辑
+6. 如需写入，再替换 `write_single_point` 的字段映射规则
 
 ## 当前模板的默认点表
 
-- `temperature`：地址 `0`，长度 `1`，`v/10`
-- `humidity`：地址 `1`，长度 `1`，`v/10`
+- `temperature`：地址 `0`，长度 `1`，`v/10`，默认 `RW`
+- `humidity`：地址 `1`，长度 `1`，`v/10`，默认 `RW`
 - `dewtemperature`：地址 `2`，长度 `1`，`v/10`
 
 这只是演示点表，方便你对照 TinyGo 版共济温湿度驱动理解迁移方式。
+
+## 写入约定
+
+模板已经内置“单次调用，只写一个字段”的参考实现，对齐当前网关与 TinyGo 驱动的约定：
+
+- `config.func_name=write`
+- `config.field_name=<字段名>`
+- `config.value=<工程量字符串>`
+
+默认情况下：
+
+- `temperature`
+- `humidity`
+
+会被视为可写字段，并通过标准 Modbus RTU `0x06` 单寄存器写下发。
+
+如果你迁移的真实设备不是单寄存器写，通常需要替换：
+
+1. `FUNC_CODE_WRITE_SINGLE`
+2. `build_write_single_frame`
+3. `parse_write_single_response`
+4. `encode_write_value`
+5. `write_single_point`
 
 ## 运行前提
 
