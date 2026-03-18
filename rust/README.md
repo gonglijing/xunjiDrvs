@@ -22,3 +22,16 @@
 - 点表驱动的输出拼装方式
 - `func_name=write` 的单点写入入口
 - 基本单元测试
+
+## describe/version 约定
+
+Rust 驱动应与 TinyGo 驱动保持同一类元数据接口约定：
+
+- `describe`：统一返回 `success + data`
+- `version`：统一返回 `success + version + productKey + data`
+
+其中：
+
+- 顶层 `version/productKey` 供宿主稳定提取
+- `data` 用于放置标准字段和驱动扩展字段
+- 常见标准字段包括 `language`、`transport`、`protocol`、`write`

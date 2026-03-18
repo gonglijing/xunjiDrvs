@@ -60,6 +60,24 @@ TinyGo 驱动与 FSU 的接口约定如下：
 - `value` 为工程量字符串，不是原始寄存器值
 - 驱动内部负责完成字段匹配、数值换算、寄存器写入和响应校验
 
+## 统一 describe/version 约定
+
+TinyGo 驱动除 `handle` 外，还应导出 `describe` 和 `version`。
+
+`describe`：
+
+- 外层结构统一为 `success + data`
+- `data` 至少建议包含 `language`、`transport`、`protocol`、`write`
+- 可写驱动可额外返回 `writable_fields`
+
+`version`：
+
+- 外层结构统一为 `success + version + productKey + data`
+- 顶层字段用于宿主稳定提取版本和产品标识
+- `data` 保留同名字段，并允许驱动补充额外说明
+
+当前 TinyGo 侧已经把这套标准收敛到 `drvs/tinygo/pkg/tinydrv/` 公共包中。
+
 ## 当前写入支持状态
 
 - `美的空调`：已实现真实单点写入

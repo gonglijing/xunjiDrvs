@@ -47,6 +47,22 @@ type DriverConfig = tinydrv.DriverConfig
 
 type DriverPoint = tinydrv.Point
 
+type readPointSpec struct {
+	Index    int
+	Field    string
+	Scale    float64
+	Decimals int
+	RW       string
+	Unit     string
+	Label    string
+}
+
+type readBlockSpec struct {
+	Start  uint16
+	Count  uint16
+	Points []readPointSpec
+}
+
 type writablePointSpec struct {
 	Field    string
 	Register uint16
@@ -93,6 +109,51 @@ var writablePointSpecs = []writablePointSpec{
 	{Field: "ILTAV", Register: REG_ILTAV, Scale: 0.1, Decimals: 1, Unit: "℃", Label: "室内低温报警值"},
 	{Field: "HHAV", Register: REG_HHAV, Scale: 0.1, Decimals: 1, Unit: "%", Label: "高湿度报警值"},
 	{Field: "LHAV", Register: REG_LHAV, Scale: 0.1, Decimals: 1, Unit: "%", Label: "低湿度报警值"},
+}
+
+var readBlockSpecs = []readBlockSpec{
+	{
+		// 设定值段：
+		// 0~2 这一小段同时包含温度设点和湿度设点，中间保留了一个未使用寄存器，
+		// 因此点位索引分别落在 0 和 2。
+		Start: REG_TEMSET,
+		Count: 3,
+		Points: []readPointSpec{
+			{Index: 0, Field: "TEMSET", Scale: 0.1, Decimals: 1, RW: "RW", Unit: "℃", Label: "温度设点"},
+			{Index: 2, Field: "HUMSET", Scale: 0.1, Decimals: 1, RW: "RW", Unit: "%", Label: "湿度设点"},
+		},
+	},
+	{
+		// 报警阈值段：
+		// 17~20 连续保存温湿度上下限，属于参数类点位，因此统一标记为 RW。
+		Start: REG_IHTAV,
+		Count: 4,
+		Points: []readPointSpec{
+			{Index: 0, Field: "IHTAV", Scale: 0.1, Decimals: 1, RW: "RW", Unit: "℃", Label: "室内高温报警值"},
+			{Index: 1, Field: "ILTAV", Scale: 0.1, Decimals: 1, RW: "RW", Unit: "℃", Label: "室内低温报警值"},
+			{Index: 2, Field: "HHAV", Scale: 0.1, Decimals: 1, RW: "RW", Unit: "%", Label: "高湿度报警值"},
+			{Index: 3, Field: "LHAV", Scale: 0.1, Decimals: 1, RW: "RW", Unit: "%", Label: "低湿度报警值"},
+		},
+	},
+	{
+		// 实时测量段：
+		// 48~49 两个寄存器是现场当前环境量，只读。
+		Start: REG_TEM,
+		Count: 2,
+		Points: []readPointSpec{
+			{Index: 0, Field: "TEM", Scale: 0.1, Decimals: 1, RW: "R", Unit: "℃", Label: "环境温度"},
+			{Index: 1, Field: "HUM", Scale: 0.1, Decimals: 1, RW: "R", Unit: "%", Label: "环境湿度"},
+		},
+	},
+	{
+		// 设备标识段：
+		// 地址寄存器单独保留为一个块，使“辅助标识点”和业务点的区分仍然清晰。
+		Start: REG_ADD,
+		Count: 1,
+		Points: []readPointSpec{
+			{Index: 0, Field: "ADD", Scale: 1, Decimals: 1, RW: "R", Unit: "", Label: "设备地址"},
+		},
+	},
 }
 
 // =============================================================================
@@ -158,39 +219,37 @@ func version() int32 {
 // =============================================================================
 func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	points := make([]DriverPoint, 0, 9)
+	addr := byte(devAddr)
 
 	// 空调协议的寄存器天然分成几个离散区块。
-	// 与其把所有地址拼成一个大区间读取，不如按文档分段读取，更容易核对和维护。
-	if values := readMultipleRegs(byte(devAddr), REG_TEMSET, 3, debug); values != nil {
-		// 设定值段：
-		// 0~2 这一小段同时包含温度设点和湿度设点，中间保留了一个未使用寄存器，
-		// 所以这里按协议原始偏移直接取 values[0] 和 values[2]。
-		// 这两个点支持远程写入，因此这里显式标成 RW，供 fsu 侧识别为可写字段。
-		points = append(points, makePoint("TEMSET", int(values[0]), 0.1, 1, "RW", "℃", "温度设点"))
-		points = append(points, makePoint("HUMSET", int(values[2]), 0.1, 1, "RW", "%", "湿度设点"))
+	// 这里把“读哪一段”和“这一段里有哪些点”都收敛到表里，
+	// 读取流程就退化成统一的“遍历区块 -> 按索引映射点位”。
+	for _, block := range readBlockSpecs {
+		values := readMultipleRegs(addr, block.Start, block.Count, debug)
+		points = appendReadBlockPoints(points, values, block.Points)
 	}
 
-	if values := readMultipleRegs(byte(devAddr), REG_IHTAV, 4, debug); values != nil {
-		// 报警阈值段：
-		// 这一段集中保存温湿度上下限，属于设备参数类点位，语义上应该和实时测量值分开。
-		// 这些阈值也属于可写参数，因此同样标记为 RW。
-		points = append(points, makePoint("IHTAV", int(values[0]), 0.1, 1, "RW", "℃", "室内高温报警值"))
-		points = append(points, makePoint("ILTAV", int(values[1]), 0.1, 1, "RW", "℃", "室内低温报警值"))
-		points = append(points, makePoint("HHAV", int(values[2]), 0.1, 1, "RW", "%", "高湿度报警值"))
-		points = append(points, makePoint("LHAV", int(values[3]), 0.1, 1, "RW", "%", "低湿度报警值"))
+	return points
+}
+
+func appendReadBlockPoints(points []DriverPoint, values []int16, specs []readPointSpec) []DriverPoint {
+	if values == nil {
+		return points
 	}
 
-	if values := readMultipleRegs(byte(devAddr), REG_TEM, 2, debug); values != nil {
-		// 实时测量段：
-		// 48~49 这两个寄存器是现场环境当前值，也是网关采集最常用的数据。
-		points = append(points, makePoint("TEM", int(values[0]), 0.1, 1, "R", "℃", "环境温度"))
-		points = append(points, makePoint("HUM", int(values[1]), 0.1, 1, "R", "%", "环境湿度"))
-	}
-
-	if val := readSingleReg(byte(devAddr), REG_ADD, debug); val >= 0 {
-		// 设备标识段：
-		// 地址寄存器单独读，既避免把中间无关地址一起带上，也让这个辅助性点位和业务点位区分开。
-		points = append(points, makePoint("ADD", int(val), 1, 1, "R", "", "设备地址"))
+	for _, spec := range specs {
+		if spec.Index < 0 || spec.Index >= len(values) {
+			continue
+		}
+		points = append(points, makePoint(
+			spec.Field,
+			int(values[spec.Index]),
+			spec.Scale,
+			spec.Decimals,
+			spec.RW,
+			spec.Unit,
+			spec.Label,
+		))
 	}
 
 	return points
@@ -276,15 +335,6 @@ func (e modbusrtuErr) Error() string { return string(e) }
 // =============================================================================
 // 【固定不变】Modbus RTU 通信函数
 // =============================================================================
-
-func readSingleReg(devAddr byte, regAddr uint16, debug bool) int {
-	// 单寄存器读取只是多寄存器读取的退化情况，因此直接复用后者。
-	values := readMultipleRegs(devAddr, regAddr, 1, debug)
-	if values == nil || len(values) < 1 {
-		return -1
-	}
-	return int(values[0])
-}
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []int16 {
 	// 通信 helper 返回的是 []uint16，这里再转成 []int16，

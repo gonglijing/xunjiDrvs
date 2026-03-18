@@ -1,14 +1,13 @@
 // =============================================================================
-// 共济温湿度 - Modbus RTU 驱动（陆家嘴社区卫生服务中心）
+// msj 温湿度 - Modbus RTU 驱动（陆家嘴社区卫生服务中心）
 // =============================================================================
 //
 // 协议类型: Modbus RTU
-// 功能码: 0x03 (INPUT_REGISTER)
+// 功能码: 0x03 (HOLDING_REGISTER)
 //
 // 点表:
 //   - 温度(temperature): 地址=0, 长度=1, 表达式=v/10
 //   - 湿度(humidity): 地址=1, 长度=1, 表达式=v/10
-//   - 漏点温度(dewtemperature): 地址=2, 长度=1, 表达式=v/10
 //
 // Host 提供: serial_transceive
 //
@@ -34,7 +33,7 @@ type DriverConfig = tinydrv.DriverConfig
 
 type DriverPoint = tinydrv.Point
 
-// 这个驱动的点位模型与共济温湿度几乎一致，都是少量连续寄存器 + 简单缩放。
+// 这个驱动的点位模型很简单：少量连续寄存器 + 简单缩放。
 type pointDef struct {
 	Field    string
 	Scale    float64

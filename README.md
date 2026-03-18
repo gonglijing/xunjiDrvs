@@ -85,6 +85,29 @@ drvs/
 - 当前 TinyGo 现网驱动里，只有 `美的空调` 实现了真实写入
 - 其余 TinyGo 驱动收到 `func_name=write` 时会显式返回“不支持写入”
 
+## 统一元数据接口
+
+除 `handle` 外，驱动还应提供统一的 `describe` 和 `version` 元数据接口。
+
+`describe` 约定：
+
+- 外层统一返回 `success + data`
+- `data` 用字符串键值对承载驱动说明
+- 标准字段通常包括 `language`、`transport`、`protocol`、`write`
+- 驱动可以按需补充扩展字段，例如 `writable_fields`
+
+`version` 约定：
+
+- 外层统一返回 `success + version + productKey + data`
+- 顶层 `version` 和 `productKey` 供宿主稳定提取
+- `data` 中同步保留同名字段，并可附加驱动自己的元数据
+
+这套约定的目标是：
+
+- 标准化宿主解析逻辑
+- 保留驱动差异表达能力
+- 避免每个驱动各自定义一套不兼容的说明格式
+
 ## 编译说明
 
 ### 1. 编译全部驱动

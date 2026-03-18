@@ -47,6 +47,22 @@ type DriverConfig = tinydrv.DriverConfig
 
 type DriverPoint = tinydrv.Point
 
+type blockPointSpec struct {
+	Index    int
+	Field    string
+	Scale    float64
+	Decimals int
+	RW       string
+	Unit     string
+	Label    string
+}
+
+type readBlockSpec struct {
+	Start  uint16
+	Count  uint16
+	Points []blockPointSpec
+}
+
 // =============================================================================
 // 【用户修改】驱动版本
 // =============================================================================
@@ -78,6 +94,46 @@ const (
 	FUNC_CODE_READ = 0x03 // 读保持寄存器
 )
 
+var readBlockSpecs = []readBlockSpec{
+	{
+		// 输出段：
+		// 这一段同时覆盖输出频率、三相输出电压和三相负载率。
+		Start: REG_OUTPUT_FREQUENCY,
+		Count: 7,
+		Points: []blockPointSpec{
+			{Index: 1, Field: "OUR", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "R相输出电压"},
+			{Index: 2, Field: "OUS", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "S相输出电压"},
+			{Index: 3, Field: "OUT", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "T相输出电压"},
+			{Index: 0, Field: "OH", Scale: 0.1, Decimals: 1, RW: "R", Unit: "Hz", Label: "输出频率"},
+			{Index: 4, Field: "loadR", Scale: 1, Decimals: 0, RW: "R", Unit: "%", Label: "R相负载率"},
+			{Index: 5, Field: "loadS", Scale: 1, Decimals: 0, RW: "R", Unit: "%", Label: "S相负载率"},
+			{Index: 6, Field: "loadT", Scale: 1, Decimals: 0, RW: "R", Unit: "%", Label: "T相负载率"},
+		},
+	},
+	{
+		// 输入段：
+		// 输入频率和三相输入电压都在这 4 个连续寄存器里。
+		Start: REG_INPUT_FREQUENCY,
+		Count: 4,
+		Points: []blockPointSpec{
+			{Index: 1, Field: "IUR", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "R相输入电压"},
+			{Index: 2, Field: "IUS", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "S相输入电压"},
+			{Index: 3, Field: "IOT", Scale: 0.1, Decimals: 1, RW: "R", Unit: "V", Label: "T相输入电压"},
+			{Index: 0, Field: "IH", Scale: 0.1, Decimals: 1, RW: "R", Unit: "Hz", Label: "输入频率"},
+		},
+	},
+	{
+		// 电池段：
+		// 电池容量和剩余时间天然是一组连续状态量。
+		Start: REG_BATTERY_CAPACITY,
+		Count: 2,
+		Points: []blockPointSpec{
+			{Index: 0, Field: "qos", Scale: 0.1, Decimals: 1, RW: "R", Unit: "%", Label: "电池容量"},
+			{Index: 1, Field: "ltime", Scale: 1, Decimals: 0, RW: "R", Unit: "min", Label: "电池剩余时间"},
+		},
+	},
+}
+
 // =============================================================================
 // 【固定不变】驱动入口
 // =============================================================================
@@ -94,7 +150,7 @@ func handle() int32 {
 	if tinydrv.IsWriteFunc(cfg.FuncName) {
 		return writeNotSupported(cfg.FieldName)
 	}
-	points := readAllUPS(cfg.DeviceAddress)
+	points := readAllPoints(cfg.DeviceAddress)
 
 	tinydrv.OutputHandleSuccess(DriverProductKey, points)
 	return 0
@@ -141,45 +197,44 @@ func version() int32 {
 // =============================================================================
 // 【用户修改】读取所有测点
 // =============================================================================
-func readAllUPS(devAddr int) []DriverPoint {
+func readAllPoints(devAddr int) []DriverPoint {
 	points := make([]DriverPoint, 0, 13)
+	addr := byte(devAddr)
 
-	// UPS 点位自然分成输出侧、输入侧、电池侧三个小区块。
-	// 按块读取能让代码结构与协议说明一一对应。
-	if values := readMultipleRegs(byte(devAddr), REG_OUTPUT_FREQUENCY, 7); values != nil {
-		points = append(points, makePoint("OUR", int(values[1]), 0.1, 1, "R", "V", "R相输出电压"))
-		points = append(points, makePoint("OUS", int(values[2]), 0.1, 1, "R", "V", "S相输出电压"))
-		points = append(points, makePoint("OUT", int(values[3]), 0.1, 1, "R", "V", "T相输出电压"))
-		points = append(points, makePoint("OH", int(values[0]), 0.1, 1, "R", "Hz", "输出频率"))
-		points = append(points, makePoint("loadR", int(values[4]), 1, 0, "R", "%", "R相负载率"))
-		points = append(points, makePoint("loadS", int(values[5]), 1, 0, "R", "%", "S相负载率"))
-		points = append(points, makePoint("loadT", int(values[6]), 1, 0, "R", "%", "T相负载率"))
-	}
-
-	if values := readMultipleRegs(byte(devAddr), REG_INPUT_FREQUENCY, 4); values != nil {
-		points = append(points, makePoint("IUR", int(values[1]), 0.1, 1, "R", "V", "R相输入电压"))
-		points = append(points, makePoint("IUS", int(values[2]), 0.1, 1, "R", "V", "S相输入电压"))
-		points = append(points, makePoint("IOT", int(values[3]), 0.1, 1, "R", "V", "T相输入电压"))
-		points = append(points, makePoint("IH", int(values[0]), 0.1, 1, "R", "Hz", "输入频率"))
-	}
-
-	if values := readMultipleRegs(byte(devAddr), REG_BATTERY_CAPACITY, 2); values != nil {
-		points = append(points, makePoint("qos", int(values[0]), 0.1, 1, "R", "%", "电池容量"))
-		points = append(points, makePoint("ltime", int(values[1]), 1, 0, "R", "min", "电池剩余时间"))
+	// UPS 点位天然分成输出侧、输入侧、电池侧三个区块。
+	// 这里把块定义和块内点位映射都写到表里，读取流程就只剩一个清晰的遍历。
+	for _, block := range readBlockSpecs {
+		values := readMultipleRegs(addr, block.Start, block.Count)
+		points = appendBlockPoints(points, values, block.Points)
 	}
 
 	return points
 }
 
-func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) DriverPoint {
+func appendBlockPoints(points []DriverPoint, values []int16, specs []blockPointSpec) []DriverPoint {
+	if values == nil {
+		return points
+	}
+
+	for _, spec := range specs {
+		if spec.Index < 0 || spec.Index >= len(values) {
+			continue
+		}
+		points = append(points, makePoint(spec, values[spec.Index]))
+	}
+
+	return points
+}
+
+func makePoint(spec blockPointSpec, rawVal int16) DriverPoint {
 	// 统一处理缩放和格式化，让调用处保留纯粹的点位定义。
-	realVal := float64(rawVal) * scale
+	realVal := float64(rawVal) * spec.Scale
 	return DriverPoint{
-		FieldName: field,
-		Value:     tinydrv.FormatFloat(realVal, decimals),
-		RW:        rw,
-		Unit:      unit,
-		Label:     label,
+		FieldName: spec.Field,
+		Value:     tinydrv.FormatFloat(realVal, spec.Decimals),
+		RW:        spec.RW,
+		Unit:      spec.Unit,
+		Label:     spec.Label,
 	}
 }
 
