@@ -32,22 +32,9 @@ func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, t
 // =============================================================================
 // 【固定不变】配置结构（网关传入）
 // =============================================================================
-type DriverConfig struct {
-	DeviceAddress int    `json:"device_address"` // Modbus 从站地址
-	FuncName      string `json:"func_name"`      // "read" | "write"
-	FieldName     string `json:"field_name"`     // 可写字段名
-	Value         string `json:"value"`          // 写操作的值
-	Debug         bool   `json:"debug"`          // 调试模式
-}
+type DriverConfig = tinydrv.DriverConfig
 
 type DriverPoint = tinydrv.Point
-type HandleResponse = tinydrv.HandleResponse
-
-type DescribeResponse = tinydrv.DescribeResponse
-type VersionData = tinydrv.VersionData
-type VersionResponse = tinydrv.VersionResponse
-type ErrorResponse = tinydrv.ErrorResponse
-
 // =============================================================================
 // 【用户修改】驱动版本
 // =============================================================================
@@ -129,7 +116,12 @@ func writeNotSupported(fieldName string) int32 {
 //
 //go:wasmexport describe
 func describe() int32 {
-	tinydrv.OutputJSON(DescribeResponse{Success: true})
+	tinydrv.OutputDescribe(map[string]string{
+		"language":  "tinygo",
+		"transport": "serial",
+		"protocol":  "modbus_rtu",
+		"write":     "unsupported",
+	})
 	return 0
 }
 
@@ -139,12 +131,10 @@ func describe() int32 {
 //
 //go:wasmexport version
 func version() int32 {
-	tinydrv.OutputJSON(VersionResponse{
-		Success: true,
-		Data: VersionData{
-			Version:    DriverVersion,
-			ProductKey: DriverProductKey,
-		},
+	tinydrv.OutputVersion(DriverVersion, DriverProductKey, map[string]string{
+		"language":  "tinygo",
+		"transport": "serial",
+		"protocol":  "modbus_rtu",
 	})
 	return 0
 }
@@ -220,16 +210,7 @@ func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
 // 获取配置 (通用)
 func getConfig() DriverConfig {
 	// 压力传感器线上默认只需要最保守的配置：地址 1、debug 关闭。
-	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
-	config := tinydrv.ParseConfigMap()
-
-	return DriverConfig{
-		DeviceAddress: tinydrv.ParseInt(config, "device_address", def.DeviceAddress),
-		FuncName:      tinydrv.ParseString(config, "func_name", def.FuncName),
-		FieldName:     tinydrv.ParseString(config, "field_name", ""),
-		Value:         tinydrv.ParseString(config, "value", ""),
-		Debug:         tinydrv.ParseBool(config, "debug", false),
-	}
+	return tinydrv.ParseDriverConfig(DriverConfig{DeviceAddress: 1, FuncName: "read"})
 }
 
 // 格式化浮点数 (通用)

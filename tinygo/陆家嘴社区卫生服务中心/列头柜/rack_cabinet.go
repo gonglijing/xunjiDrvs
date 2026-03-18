@@ -33,20 +33,9 @@ func callTCPTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, time
 // =============================================================================
 // 【固定不变】配置结构（网关传入）
 // =============================================================================
-type DriverConfig struct {
-	DeviceAddress int    `json:"device_address"`
-	FuncName      string `json:"func_name"`
-	FieldName     string `json:"field_name"`
-	Value         string `json:"value"`
-}
+type DriverConfig = tinydrv.DriverConfig
 
 type DriverPoint = tinydrv.Point
-type HandleResponse = tinydrv.HandleResponse
-
-type DescribeResponse = tinydrv.DescribeResponse
-type VersionData = tinydrv.VersionData
-type VersionResponse = tinydrv.VersionResponse
-type ErrorResponse = tinydrv.ErrorResponse
 
 // blockPointSpec 用于描述“连续寄存器块里某个偏移位置对应一个普通数值点”。
 type blockPointSpec struct {
@@ -236,7 +225,12 @@ func writeNotSupported(fieldName string) int32 {
 //
 //go:wasmexport describe
 func describe() int32 {
-	tinydrv.OutputJSON(DescribeResponse{Success: true})
+	tinydrv.OutputDescribe(map[string]string{
+		"language":  "tinygo",
+		"transport": "tcp",
+		"protocol":  "modbus_tcp",
+		"write":     "unsupported",
+	})
 	return 0
 }
 
@@ -246,12 +240,10 @@ func describe() int32 {
 //
 //go:wasmexport version
 func version() int32 {
-	tinydrv.OutputJSON(VersionResponse{
-		Success: true,
-		Data: VersionData{
-			Version:    DriverVersion,
-			ProductKey: DriverProductKey,
-		},
+	tinydrv.OutputVersion(DriverVersion, DriverProductKey, map[string]string{
+		"language":  "tinygo",
+		"transport": "tcp",
+		"protocol":  "modbus_tcp",
 	})
 	return 0
 }
@@ -381,14 +373,7 @@ func tcpTransceive(req []byte, resp []byte, timeoutMs int) int {
 // 【固定不变】工具函数
 // =============================================================================
 func getConfig() DriverConfig {
-	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
-	config := tinydrv.ParseConfigMap()
-	return DriverConfig{
-		DeviceAddress: tinydrv.ParseInt(config, "device_address", def.DeviceAddress),
-		FuncName:      tinydrv.ParseString(config, "func_name", def.FuncName),
-		FieldName:     tinydrv.ParseString(config, "field_name", ""),
-		Value:         tinydrv.ParseString(config, "value", ""),
-	}
+	return tinydrv.ParseDriverConfig(DriverConfig{DeviceAddress: 1, FuncName: "read"})
 }
 
 func main() {}

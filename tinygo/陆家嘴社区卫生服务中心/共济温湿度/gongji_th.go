@@ -32,21 +32,9 @@ func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, t
 
 // DriverConfig 描述网关注入给驱动的运行参数。
 // 这个驱动真正关心的是 device_address 与 debug，其余字段保留是为了与统一接口对齐。
-type DriverConfig struct {
-	DeviceAddress int    `json:"device_address"`
-	FuncName      string `json:"func_name"`
-	FieldName     string `json:"field_name"`
-	Value         string `json:"value"`
-	Debug         bool   `json:"debug"`
-}
+type DriverConfig = tinydrv.DriverConfig
 
 type DriverPoint = tinydrv.Point
-type HandleResponse = tinydrv.HandleResponse
-
-type DescribeResponse = tinydrv.DescribeResponse
-type VersionData = tinydrv.VersionData
-type VersionResponse = tinydrv.VersionResponse
-type ErrorResponse = tinydrv.ErrorResponse
 
 // pointDef 只描述“一个业务点如何从寄存器值换算出来”，
 // 不掺杂任何通信层细节。
@@ -98,18 +86,21 @@ func handle() int32 {
 
 //go:wasmexport describe
 func describe() int32 {
-	tinydrv.OutputJSON(DescribeResponse{Success: true})
+	tinydrv.OutputDescribe(map[string]string{
+		"language":  "tinygo",
+		"transport": "serial",
+		"protocol":  "modbus_rtu",
+		"write":     "unsupported",
+	})
 	return 0
 }
 
 //go:wasmexport version
 func version() int32 {
-	tinydrv.OutputJSON(VersionResponse{
-		Success: true,
-		Data: VersionData{
-			Version:    DriverVersion,
-			ProductKey: DriverProductKey,
-		},
+	tinydrv.OutputVersion(DriverVersion, DriverProductKey, map[string]string{
+		"language":  "tinygo",
+		"transport": "serial",
+		"protocol":  "modbus_rtu",
 	})
 	return 0
 }
@@ -166,16 +157,7 @@ func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
 
 func getConfig() DriverConfig {
 	// 配置解析统一走 tinydrv，保证默认值和 trim 行为与其他驱动一致。
-	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
-	config := tinydrv.ParseConfigMap()
-
-	return DriverConfig{
-		DeviceAddress: tinydrv.ParseInt(config, "device_address", def.DeviceAddress),
-		FuncName:      tinydrv.ParseString(config, "func_name", def.FuncName),
-		FieldName:     tinydrv.ParseString(config, "field_name", ""),
-		Value:         tinydrv.ParseString(config, "value", ""),
-		Debug:         tinydrv.ParseBool(config, "debug", false),
-	}
+	return tinydrv.ParseDriverConfig(DriverConfig{DeviceAddress: 1, FuncName: "read"})
 }
 
 func main() {}

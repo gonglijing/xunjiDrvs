@@ -24,6 +24,18 @@ type InvocationEnvelope struct {
 	Config map[string]string `json:"config"`
 }
 
+// DriverConfig 是 TinyGo 驱动共用的基础入参结构。
+//
+// 各驱动如果没有额外私有配置，直接复用这套字段即可；
+// 如果将来某个驱动确实需要扩展字段，也可以在本地再包一层。
+type DriverConfig struct {
+	DeviceAddress int    `json:"device_address"`
+	FuncName      string `json:"func_name"`
+	FieldName     string `json:"field_name"`
+	Value         string `json:"value"`
+	Debug         bool   `json:"debug"`
+}
+
 // Point 对应网关侧约定的单个测点输出格式。
 // 几乎所有只读驱动都会把寄存器值最终映射为这个结构。
 type Point struct {
@@ -44,22 +56,17 @@ type HandleResponse struct {
 }
 
 // DescribeResponse 对应 describe 导出函数的统一返回格式。
-// 当前大多数驱动没有可写点位，因此 data 常常是空对象。
+// data 保持 map 结构，这样驱动既能遵守统一外层，也能按需补充自己的元数据。
 type DescribeResponse struct {
-	Success bool     `json:"success"`
-	Data    struct{} `json:"data"`
-}
-
-// VersionData/VersionResponse 对应 version 导出函数的固定输出。
-// 把这两个结构放在公共包里后，驱动文件只需要填自己的 version 与 productKey。
-type VersionData struct {
-	Version    string `json:"version"`
-	ProductKey string `json:"productKey"`
+	Success bool              `json:"success"`
+	Data    map[string]string `json:"data"`
 }
 
 type VersionResponse struct {
-	Success bool        `json:"success"`
-	Data    VersionData `json:"data"`
+	Success    bool              `json:"success"`
+	Version    string            `json:"version,omitempty"`
+	ProductKey string            `json:"productKey,omitempty"`
+	Data       map[string]string `json:"data"`
 }
 
 type ErrorResponse struct {
@@ -101,6 +108,21 @@ func OutputHandleSuccess(productKey string, points []Point) {
 
 func OutputHandleError(productKey string, errText string) {
 	OutputJSON(NewHandleError(productKey, errText))
+}
+
+// ParseDriverConfig 按统一规则解析 TinyGo 驱动最常用的基础配置。
+//
+// 这里保留 def 的意义，是允许不同驱动按需覆盖默认地址、默认 debug 开关等，
+// 同时仍然共享同一套解析逻辑。
+func ParseDriverConfig(def DriverConfig) DriverConfig {
+	config := ParseConfigMap()
+	return DriverConfig{
+		DeviceAddress: ParseInt(config, "device_address", def.DeviceAddress),
+		FuncName:      ParseString(config, "func_name", def.FuncName),
+		FieldName:     ParseString(config, "field_name", def.FieldName),
+		Value:         ParseString(config, "value", def.Value),
+		Debug:         ParseBool(config, "debug", def.Debug),
+	}
 }
 
 // ParseConfigMap 解析 Extism 输入中的 config 映射。
@@ -165,6 +187,54 @@ func IsWriteFunc(funcName string) bool {
 // 单独收敛到公共包后，驱动文件里不必再重复一行 strconv.FormatFloat。
 func FormatFloat(val float64, decimals int) string {
 	return strconv.FormatFloat(val, 'f', decimals, 64)
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return make(map[string]string)
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		key := strings.TrimSpace(k)
+		if key == "" {
+			continue
+		}
+		dst[key] = strings.TrimSpace(v)
+	}
+	return dst
+}
+
+func mergeVersionData(version string, productKey string, extras map[string]string) map[string]string {
+	data := cloneStringMap(extras)
+	data["version"] = strings.TrimSpace(version)
+	data["productKey"] = strings.TrimSpace(productKey)
+	return data
+}
+
+// OutputDescribe 统一输出 describe 响应。
+//
+// 统一的是 success/data 外层结构；
+// 灵活的是 data 内部字段，驱动可以补充 transport、protocol、write 等说明。
+func OutputDescribe(data map[string]string) {
+	OutputJSON(DescribeResponse{
+		Success: true,
+		Data:    cloneStringMap(data),
+	})
+}
+
+// OutputVersion 统一输出 version 响应。
+//
+// 顶层仍保留 version/productKey，兼容现有宿主解析；
+// 同时在 data 中保留同名字段，并允许驱动附带额外元数据。
+func OutputVersion(version string, productKey string, extras map[string]string) {
+	version = strings.TrimSpace(version)
+	productKey = strings.TrimSpace(productKey)
+	OutputJSON(VersionResponse{
+		Success:    true,
+		Version:    version,
+		ProductKey: productKey,
+		Data:       mergeVersionData(version, productKey, extras),
+	})
 }
 
 // OutputJSON 负责把任意响应结构输出给 Extism 宿主。
