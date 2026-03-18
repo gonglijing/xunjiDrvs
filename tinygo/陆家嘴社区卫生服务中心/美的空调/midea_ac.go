@@ -19,12 +19,11 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"strconv"
-	"strings"
 
 	pdk "github.com/extism/go-pdk"
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbusrtu"
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
 )
 
 // =============================================================================
@@ -44,6 +43,20 @@ type DriverConfig struct {
 	Value         string `json:"value"`
 	Debug         bool   `json:"debug"`
 }
+
+type DriverPoint = tinydrv.Point
+
+type HandleResponse struct {
+	Success    bool          `json:"success"`
+	ProductKey string        `json:"productKey"`
+	Points     []DriverPoint `json:"points"`
+	Error      string        `json:"error,omitempty"`
+}
+
+type DescribeResponse = tinydrv.DescribeResponse
+type VersionData = tinydrv.VersionData
+type VersionResponse = tinydrv.VersionResponse
+type ErrorResponse = tinydrv.ErrorResponse
 
 // =============================================================================
 // 【用户修改】驱动版本
@@ -81,17 +94,17 @@ const (
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			outputJSON(map[string]interface{}{"success": false, "error": "panic"})
+			outputJSON(ErrorResponse{Success: false, Error: "panic"})
 		}
 	}()
 
 	cfg := getConfig()
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
-	outputJSON(map[string]interface{}{
-		"success":    true,
-		"productKey": DriverProductKey,
-		"points":     points,
+	outputJSON(HandleResponse{
+		Success:    true,
+		ProductKey: DriverProductKey,
+		Points:     points,
 	})
 	return 0
 }
@@ -102,10 +115,7 @@ func handle() int32 {
 //
 //go:wasmexport describe
 func describe() int32 {
-	outputJSON(map[string]interface{}{
-		"success": true,
-		"data":    map[string]string{},
-	})
+	outputJSON(DescribeResponse{Success: true})
 	return 0
 }
 
@@ -115,11 +125,11 @@ func describe() int32 {
 //
 //go:wasmexport version
 func version() int32 {
-	outputJSON(map[string]interface{}{
-		"success": true,
-		"data": map[string]string{
-			"version":    DriverVersion,
-			"productKey": DriverProductKey,
+	outputJSON(VersionResponse{
+		Success: true,
+		Data: VersionData{
+			Version:    DriverVersion,
+			ProductKey: DriverProductKey,
 		},
 	})
 	return 0
@@ -128,8 +138,8 @@ func version() int32 {
 // =============================================================================
 // 【用户修改】读取所有测点
 // =============================================================================
-func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
-	points := make([]map[string]interface{}, 0)
+func readAllPoints(devAddr int, debug bool) []DriverPoint {
+	points := make([]DriverPoint, 0, 9)
 
 	if values := readMultipleRegs(byte(devAddr), REG_TEMSET, 3, debug); values != nil {
 		points = append(points, makePoint("TEMSET", int(values[0]), 0.1, 1, "R", "℃", "温度设点"))
@@ -155,18 +165,18 @@ func readAllPoints(devAddr int, debug bool) []map[string]interface{} {
 	return points
 }
 
-func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) map[string]interface{} {
+func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) DriverPoint {
 	realVal := float64(rawVal) * scale
 	return makePointValue(field, realVal, decimals, rw, unit, label)
 }
 
-func makePointValue(field string, value float64, decimals int, rw, unit, label string) map[string]interface{} {
-	return map[string]interface{}{
-		"field_name": field,
-		"value":      formatFloat(value, decimals),
-		"rw":         rw,
-		"unit":       unit,
-		"label":      label,
+func makePointValue(field string, value float64, decimals int, rw, unit, label string) DriverPoint {
+	return DriverPoint{
+		FieldName: field,
+		Value:     formatFloat(value, decimals),
+		RW:        rw,
+		Unit:      unit,
+		Label:     label,
 	}
 }
 
@@ -240,56 +250,11 @@ func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
 }
 
 func buildReadFrame(addr byte, start uint16, qty uint16) []byte {
-	req := make([]byte, 8)
-	req[0] = addr
-	req[1] = FUNC_CODE_READ
-	req[2], req[3] = byte(start>>8), byte(start)
-	req[4], req[5] = byte(qty>>8), byte(qty)
-	crc := crc16(req[:6])
-	req[6], req[7] = byte(crc), byte(crc>>8)
-	return req
+	return modbusrtu.BuildReadFrame(addr, FUNC_CODE_READ, start, qty)
 }
 
 func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
-	if len(data) < 5 || data[0] != addr || data[1] != FUNC_CODE_READ {
-		return nil, errf("invalid response")
-	}
-	byteCnt := int(data[2])
-	if byteCnt < 2 || len(data) < 3+byteCnt+2 {
-		return nil, errf("byte count mismatch")
-	}
-	if !checkCRC(data[:3+byteCnt+2]) {
-		return nil, errf("crc error")
-	}
-
-	values := make([]uint16, byteCnt/2)
-	for i := 0; i < len(values); i++ {
-		values[i] = uint16(data[3+i*2])<<8 | uint16(data[4+i*2])
-	}
-	return values, nil
-}
-
-func crc16(data []byte) uint16 {
-	var crc uint16 = 0xFFFF
-	for _, b := range data {
-		crc ^= uint16(b)
-		for i := 0; i < 8; i++ {
-			if crc&0x0001 != 0 {
-				crc = (crc >> 1) ^ 0xA001
-			} else {
-				crc >>= 1
-			}
-		}
-	}
-	return crc
-}
-
-func checkCRC(data []byte) bool {
-	if len(data) < 2 {
-		return false
-	}
-	got := uint16(data[len(data)-2]) | uint16(data[len(data)-1])<<8
-	return crc16(data[:len(data)-2]) == got
+	return modbusrtu.ParseReadResponse(data, addr, FUNC_CODE_READ)
 }
 
 // =============================================================================
@@ -298,67 +263,30 @@ func checkCRC(data []byte) bool {
 
 func getConfig() DriverConfig {
 	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
-	var envelope struct {
-		Config map[string]string `json:"config"`
+	config := tinydrv.ParseConfigMap()
+	return DriverConfig{
+		DeviceAddress: tinydrv.ParseInt(config, "device_address", def.DeviceAddress),
+		FuncName:      tinydrv.ParseString(config, "func_name", def.FuncName),
+		FieldName:     tinydrv.ParseString(config, "field_name", ""),
+		Value:         tinydrv.ParseString(config, "value", ""),
+		Debug:         tinydrv.ParseBool(config, "debug", false),
 	}
-	if err := pdk.InputJSON(&envelope); err != nil {
-		return def
-	}
-
-	cfg := def
-	if v := strings.TrimSpace(envelope.Config["device_address"]); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.DeviceAddress = n
-		}
-	}
-	if v := strings.TrimSpace(envelope.Config["func_name"]); v != "" {
-		cfg.FuncName = v
-	}
-	if v := strings.TrimSpace(envelope.Config["field_name"]); v != "" {
-		cfg.FieldName = v
-	}
-	if v := strings.TrimSpace(envelope.Config["value"]); v != "" {
-		cfg.Value = v
-	}
-	if v := strings.TrimSpace(envelope.Config["debug"]); v != "" {
-		cfg.Debug = v == "1" || strings.EqualFold(v, "true")
-	}
-	return cfg
 }
 
 func formatFloat(val float64, decimals int) string {
 	return strconv.FormatFloat(val, 'f', decimals, 64)
 }
 
-type simpleErr string
-
-func (e simpleErr) Error() string { return string(e) }
-func errf(s string) error         { return simpleErr(s) }
-
 func outputJSON(v interface{}) {
-	b, _ := json.Marshal(v)
-	if len(b) == 0 {
-		b = []byte(`{"success":false,"error":"encode failed"}`)
-	}
-	pdk.Output(b)
+	tinydrv.OutputJSON(v)
 }
 
 func logf(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	pdk.Log(pdk.LogDebug, msg)
+	tinydrv.Logf(format, args...)
 }
 
 func hexPreview(b []byte, n int, max int) string {
-	if n <= 0 {
-		return ""
-	}
-	if n > len(b) {
-		n = len(b)
-	}
-	if n > max {
-		n = max
-	}
-	return fmt.Sprintf("% X", b[:n])
+	return tinydrv.HexPreview(b, n, max)
 }
 
 func main() {}

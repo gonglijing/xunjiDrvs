@@ -23,12 +23,11 @@
 package main
 
 import (
-	"encoding/binary"
-	"encoding/json"
 	"strconv"
-	"strings"
 
 	pdk "github.com/extism/go-pdk"
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbustcp"
+	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
 )
 
 // =============================================================================
@@ -47,6 +46,20 @@ type DriverConfig struct {
 	FieldName     string `json:"field_name"`     // 可写字段名
 	Value         string `json:"value"`          // 写操作的值
 }
+
+type DriverPoint = tinydrv.Point
+
+type HandleResponse struct {
+	Success    bool          `json:"success"`
+	ProductKey string        `json:"productKey"`
+	Points     []DriverPoint `json:"points"`
+	Error      string        `json:"error,omitempty"`
+}
+
+type DescribeResponse = tinydrv.DescribeResponse
+type VersionData = tinydrv.VersionData
+type VersionResponse = tinydrv.VersionResponse
+type ErrorResponse = tinydrv.ErrorResponse
 
 // =============================================================================
 // 【用户修改】驱动版本
@@ -87,17 +100,17 @@ const (
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			outputJSON(map[string]interface{}{"success": false, "error": "panic"})
+			outputJSON(ErrorResponse{Success: false, Error: "panic"})
 		}
 	}()
 
 	cfg := getConfig()
 	points := readAllUPS(cfg.DeviceAddress)
 
-	outputJSON(map[string]interface{}{
-		"success":    true,
-		"productKey": DriverProductKey,
-		"points":     points,
+	outputJSON(HandleResponse{
+		Success:    true,
+		ProductKey: DriverProductKey,
+		Points:     points,
 	})
 	return 0
 }
@@ -108,10 +121,7 @@ func handle() int32 {
 //
 //go:wasmexport describe
 func describe() int32 {
-	outputJSON(map[string]interface{}{
-		"success": true,
-		"data":    map[string]string{},
-	})
+	outputJSON(DescribeResponse{Success: true})
 	return 0
 }
 
@@ -121,11 +131,11 @@ func describe() int32 {
 //
 //go:wasmexport version
 func version() int32 {
-	outputJSON(map[string]interface{}{
-		"success": true,
-		"data": map[string]string{
-			"version":    DriverVersion,
-			"productKey": DriverProductKey,
+	outputJSON(VersionResponse{
+		Success: true,
+		Data: VersionData{
+			Version:    DriverVersion,
+			ProductKey: DriverProductKey,
 		},
 	})
 	return 0
@@ -134,8 +144,8 @@ func version() int32 {
 // =============================================================================
 // 【用户修改】读取所有测点
 // =============================================================================
-func readAllUPS(devAddr int) []map[string]interface{} {
-	points := make([]map[string]interface{}, 0)
+func readAllUPS(devAddr int) []DriverPoint {
+	points := make([]DriverPoint, 0, 13)
 
 	if values := readMultipleRegs(byte(devAddr), REG_OUTPUT_FREQUENCY, 7); values != nil {
 		points = append(points, makePoint("OUR", int(values[1]), 0.1, 1, "R", "V", "R相输出电压"))
@@ -162,14 +172,14 @@ func readAllUPS(devAddr int) []map[string]interface{} {
 	return points
 }
 
-func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) map[string]interface{} {
+func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) DriverPoint {
 	realVal := float64(rawVal) * scale
-	return map[string]interface{}{
-		"field_name": field,
-		"value":      formatFloat(realVal, decimals),
-		"rw":         rw,
-		"unit":       unit,
-		"label":      label,
+	return DriverPoint{
+		FieldName: field,
+		Value:     formatFloat(realVal, decimals),
+		RW:        rw,
+		Unit:      unit,
+		Label:     label,
 	}
 }
 
@@ -226,45 +236,11 @@ func tcpTransceive(req []byte, resp []byte, timeoutMs int) int {
 }
 
 func buildReadRequest(addr byte, startReg uint16, count uint16) []byte {
-	mbap := make([]byte, 12)
-	mbap[0] = 0x00
-	mbap[1] = 0x01
-	mbap[2] = 0x00
-	mbap[3] = 0x00
-	mbap[4] = 0x00
-	mbap[5] = 0x06
-	mbap[6] = addr
-
-	mbap[7] = FUNC_CODE_READ
-	mbap[8] = byte(startReg >> 8)
-	mbap[9] = byte(startReg)
-	mbap[10] = byte(count >> 8)
-	mbap[11] = byte(count)
-
-	return mbap
+	return modbustcp.BuildReadRequest(addr, FUNC_CODE_READ, startReg, count)
 }
 
 func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
-	pdu := data[6:]
-	if len(pdu) < 3 {
-		return nil, errf("响应数据不完整")
-	}
-
-	if pdu[0] != addr || pdu[1] != FUNC_CODE_READ {
-		return nil, errf("响应地址或功能码不匹配")
-	}
-
-	byteCount := int(pdu[2])
-	if len(pdu) < 3+byteCount {
-		return nil, errf("响应数据长度不足")
-	}
-
-	values := make([]uint16, byteCount/2)
-	for i := 0; i < len(values); i++ {
-		values[i] = binary.BigEndian.Uint16(pdu[3+i*2:])
-	}
-
-	return values, nil
+	return modbustcp.ParseReadResponse(data, addr, FUNC_CODE_READ)
 }
 
 // =============================================================================
@@ -273,46 +249,21 @@ func parseReadResponse(data []byte, addr byte) ([]uint16, error) {
 
 func getConfig() DriverConfig {
 	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
-	var envelope struct {
-		Config map[string]string `json:"config"`
+	config := tinydrv.ParseConfigMap()
+	return DriverConfig{
+		DeviceAddress: tinydrv.ParseInt(config, "device_address", def.DeviceAddress),
+		FuncName:      tinydrv.ParseString(config, "func_name", def.FuncName),
+		FieldName:     tinydrv.ParseString(config, "field_name", ""),
+		Value:         tinydrv.ParseString(config, "value", ""),
 	}
-	if err := pdk.InputJSON(&envelope); err != nil {
-		return def
-	}
-
-	cfg := def
-	if v := strings.TrimSpace(envelope.Config["device_address"]); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.DeviceAddress = n
-		}
-	}
-	if v := strings.TrimSpace(envelope.Config["func_name"]); v != "" {
-		cfg.FuncName = v
-	}
-	if v := strings.TrimSpace(envelope.Config["field_name"]); v != "" {
-		cfg.FieldName = v
-	}
-	if v := strings.TrimSpace(envelope.Config["value"]); v != "" {
-		cfg.Value = v
-	}
-	return cfg
 }
 
 func formatFloat(val float64, decimals int) string {
 	return strconv.FormatFloat(val, 'f', decimals, 64)
 }
 
-type simpleErr string
-
-func (e simpleErr) Error() string { return string(e) }
-func errf(s string) error         { return simpleErr(s) }
-
 func outputJSON(v interface{}) {
-	b, _ := json.Marshal(v)
-	if len(b) == 0 {
-		b = []byte(`{"success":false,"error":"encode failed"}`)
-	}
-	pdk.Output(b)
+	tinydrv.OutputJSON(v)
 }
 
 func main() {}
