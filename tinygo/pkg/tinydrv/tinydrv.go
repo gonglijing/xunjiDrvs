@@ -21,6 +21,13 @@ type Point struct {
 	Label     string `json:"label"`
 }
 
+type HandleResponse struct {
+	Success    bool    `json:"success"`
+	ProductKey string  `json:"productKey"`
+	Points     []Point `json:"points"`
+	Error      string  `json:"error,omitempty"`
+}
+
 type DescribeResponse struct {
 	Success bool     `json:"success"`
 	Data    struct{} `json:"data"`
@@ -77,6 +84,10 @@ func ParseBool(config map[string]string, key string, def bool) bool {
 		return def
 	}
 	return value == "1" || strings.EqualFold(value, "true")
+}
+
+func FormatFloat(val float64, decimals int) string {
+	return strconv.FormatFloat(val, 'f', decimals, 64)
 }
 
 func OutputJSON(v interface{}) {

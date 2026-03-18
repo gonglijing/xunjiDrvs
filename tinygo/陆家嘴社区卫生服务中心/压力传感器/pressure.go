@@ -12,8 +12,6 @@
 package main
 
 import (
-	"strconv"
-
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/hostio"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbusrtu"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
@@ -42,20 +40,11 @@ type DriverConfig struct {
 }
 
 type DriverPoint = tinydrv.Point
-
-type HandleResponse struct {
-	Success    bool          `json:"success"`
-	ProductKey string        `json:"productKey"`
-	Points     []DriverPoint `json:"points"`
-	Error      string        `json:"error,omitempty"`
-}
+type HandleResponse = tinydrv.HandleResponse
 
 type DescribeResponse = tinydrv.DescribeResponse
-
 type VersionData = tinydrv.VersionData
-
 type VersionResponse = tinydrv.VersionResponse
-
 type ErrorResponse = tinydrv.ErrorResponse
 
 // =============================================================================
@@ -109,7 +98,7 @@ type PointConfig struct {
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			outputJSON(ErrorResponse{Success: false, Error: "panic"})
+			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: "panic"})
 		}
 	}()
 
@@ -118,7 +107,7 @@ func handle() int32 {
 	// 读操作 - 读取所有监控参数
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
-	outputJSON(HandleResponse{
+	tinydrv.OutputJSON(HandleResponse{
 		Success:    true,
 		ProductKey: DriverProductKey,
 		Points:     points,
@@ -132,7 +121,7 @@ func handle() int32 {
 //
 //go:wasmexport describe
 func describe() int32 {
-	outputJSON(DescribeResponse{Success: true})
+	tinydrv.OutputJSON(DescribeResponse{Success: true})
 	return 0
 }
 
@@ -142,7 +131,7 @@ func describe() int32 {
 //
 //go:wasmexport version
 func version() int32 {
-	outputJSON(VersionResponse{
+	tinydrv.OutputJSON(VersionResponse{
 		Success: true,
 		Data: VersionData{
 			Version:    DriverVersion,
@@ -179,7 +168,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	totalLength := maxEndAddr - startAddr
 
 	// 批量读取
-	values, err := modbusrtu.ReadRegisters(serialTransceive, byte(devAddr), FUNC_CODE_READ, startAddr, totalLength, 1000, debug, 16, logf)
+	values, err := modbusrtu.ReadRegisters(serialTransceive, byte(devAddr), FUNC_CODE_READ, startAddr, totalLength, 1000, debug, 16, tinydrv.Logf)
 	if err != nil {
 		return points
 	}
@@ -196,7 +185,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 
 		points = append(points, DriverPoint{
 			FieldName: cfg.Field,
-			Value:     formatFloat(realVal, cfg.Decimals),
+			Value:     tinydrv.FormatFloat(realVal, cfg.Decimals),
 			RW:        cfg.RW,
 			Unit:      cfg.Unit,
 			Label:     cfg.Label,
@@ -235,18 +224,4 @@ func getConfig() DriverConfig {
 }
 
 // 格式化浮点数 (通用)
-func formatFloat(val float64, decimals int) string {
-	return strconv.FormatFloat(val, 'f', decimals, 64)
-}
-
-// 输出 JSON (通用)
-func outputJSON(v interface{}) {
-	tinydrv.OutputJSON(v)
-}
-
-// 调试日志 (通用)
-func logf(format string, args ...interface{}) {
-	tinydrv.Logf(format, args...)
-}
-
 func main() {}

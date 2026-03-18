@@ -18,8 +18,6 @@
 package main
 
 import (
-	"strconv"
-
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/hostio"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbusrtu"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
@@ -41,13 +39,7 @@ type DriverConfig struct {
 }
 
 type DriverPoint = tinydrv.Point
-
-type HandleResponse struct {
-	Success    bool          `json:"success"`
-	ProductKey string        `json:"productKey"`
-	Points     []DriverPoint `json:"points"`
-	Error      string        `json:"error,omitempty"`
-}
+type HandleResponse = tinydrv.HandleResponse
 
 type DescribeResponse = tinydrv.DescribeResponse
 type VersionData = tinydrv.VersionData
@@ -371,14 +363,14 @@ var readRanges = []RegisterRange{
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			outputJSON(ErrorResponse{Success: false, Error: "panic"})
+			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: "panic"})
 		}
 	}()
 
 	cfg := getConfig()
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
-	outputJSON(HandleResponse{
+	tinydrv.OutputJSON(HandleResponse{
 		Success:    true,
 		ProductKey: DriverProductKey,
 		Points:     points,
@@ -388,13 +380,13 @@ func handle() int32 {
 
 //go:wasmexport describe
 func describe() int32 {
-	outputJSON(DescribeResponse{Success: true})
+	tinydrv.OutputJSON(DescribeResponse{Success: true})
 	return 0
 }
 
 //go:wasmexport version
 func version() int32 {
-	outputJSON(VersionResponse{
+	tinydrv.OutputJSON(VersionResponse{
 		Success: true,
 		Data: VersionData{
 			Version:    DriverVersion,
@@ -413,7 +405,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	}
 
 	if debug && len(valueByAddr) == 0 {
-		logf("no points collected after adaptive reads")
+		tinydrv.Logf("no points collected after adaptive reads")
 	}
 
 	for _, cfg := range pointConfig {
@@ -429,7 +421,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 func makePoint(cfg PointConfig, raw uint16) DriverPoint {
 	return DriverPoint{
 		FieldName: cfg.Field,
-		Value:     formatFloat(float64(raw)*cfg.Scale, cfg.Decimals),
+		Value:     tinydrv.FormatFloat(float64(raw)*cfg.Scale, cfg.Decimals),
 		RW:        cfg.RW,
 		Unit:      cfg.Unit,
 		Label:     cfg.Label,
@@ -451,7 +443,7 @@ func readRangeAdaptive(devAddr byte, logicalStart uint16, count uint16, debug bo
 
 	if count == 1 {
 		if debug {
-			logf("skip unreadable register=%d", logicalStart)
+			tinydrv.Logf("skip unreadable register=%d", logicalStart)
 		}
 		return
 	}
@@ -471,7 +463,7 @@ func readMultipleRegsLogical(devAddr byte, logicalStart uint16, count uint16, de
 	}
 
 	if debug {
-		logf("retry with 0-based address logical=%d query=%d count=%d", logicalStart, logicalStart-1, count)
+		tinydrv.Logf("retry with 0-based address logical=%d query=%d count=%d", logicalStart, logicalStart-1, count)
 	}
 
 	return readMultipleRegs(devAddr, logicalStart-1, count, debug)
@@ -485,20 +477,20 @@ func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) [
 	if values, err := readMultipleRegsWithFunc(devAddr, startReg, count, FUNC_CODE_READ_HOLDING, debug); err == nil {
 		return values
 	} else if debug {
-		logf("read holding failed addr=%d count=%d err=%v", startReg, count, err)
+		tinydrv.Logf("read holding failed addr=%d count=%d err=%v", startReg, count, err)
 	}
 
 	if values, err := readMultipleRegsWithFunc(devAddr, startReg, count, FUNC_CODE_READ_INPUT, debug); err == nil {
 		return values
 	} else if debug {
-		logf("read input failed addr=%d count=%d err=%v", startReg, count, err)
+		tinydrv.Logf("read input failed addr=%d count=%d err=%v", startReg, count, err)
 	}
 
 	return nil
 }
 
 func readMultipleRegsWithFunc(devAddr byte, startReg uint16, count uint16, funcCode byte, debug bool) ([]uint16, error) {
-	return modbusrtu.ReadRegisters(serialTransceive, devAddr, funcCode, startReg, count, 1000, debug, 24, logf)
+	return modbusrtu.ReadRegisters(serialTransceive, devAddr, funcCode, startReg, count, 1000, debug, 24, tinydrv.Logf)
 }
 
 func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
@@ -517,21 +509,9 @@ func getConfig() DriverConfig {
 	}
 }
 
-func formatFloat(val float64, decimals int) string {
-	return strconv.FormatFloat(val, 'f', decimals, 64)
-}
-
 type simpleErr string
 
 func (e simpleErr) Error() string { return string(e) }
 func errf(s string) error         { return simpleErr(s) }
-
-func outputJSON(v interface{}) {
-	tinydrv.OutputJSON(v)
-}
-
-func logf(format string, args ...interface{}) {
-	tinydrv.Logf(format, args...)
-}
 
 func main() {}

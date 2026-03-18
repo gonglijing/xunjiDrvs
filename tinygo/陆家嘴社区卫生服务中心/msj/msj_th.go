@@ -16,8 +16,6 @@
 package main
 
 import (
-	"strconv"
-
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/hostio"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbusrtu"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
@@ -39,20 +37,11 @@ type DriverConfig struct {
 }
 
 type DriverPoint = tinydrv.Point
-
-type HandleResponse struct {
-	Success    bool          `json:"success"`
-	ProductKey string        `json:"productKey"`
-	Points     []DriverPoint `json:"points"`
-	Error      string        `json:"error,omitempty"`
-}
+type HandleResponse = tinydrv.HandleResponse
 
 type DescribeResponse = tinydrv.DescribeResponse
-
 type VersionData = tinydrv.VersionData
-
 type VersionResponse = tinydrv.VersionResponse
-
 type ErrorResponse = tinydrv.ErrorResponse
 
 type pointDef struct {
@@ -85,14 +74,14 @@ var pointDefs = [...]pointDef{
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			outputJSON(ErrorResponse{Success: false, Error: "panic"})
+			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: "panic"})
 		}
 	}()
 
 	cfg := getConfig()
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
-	outputJSON(HandleResponse{
+	tinydrv.OutputJSON(HandleResponse{
 		Success:    true,
 		ProductKey: DriverProductKey,
 		Points:     points,
@@ -102,13 +91,13 @@ func handle() int32 {
 
 //go:wasmexport describe
 func describe() int32 {
-	outputJSON(DescribeResponse{Success: true})
+	tinydrv.OutputJSON(DescribeResponse{Success: true})
 	return 0
 }
 
 //go:wasmexport version
 func version() int32 {
-	outputJSON(VersionResponse{
+	tinydrv.OutputJSON(VersionResponse{
 		Success: true,
 		Data: VersionData{
 			Version:    DriverVersion,
@@ -137,7 +126,7 @@ func makePoint(def pointDef, raw int64) DriverPoint {
 	v := float64(raw) * def.Scale
 	return DriverPoint{
 		FieldName: def.Field,
-		Value:     formatFloat(v, def.Decimals),
+		Value:     tinydrv.FormatFloat(v, def.Decimals),
 		RW:        def.RW,
 		Unit:      def.Unit,
 		Label:     def.Label,
@@ -145,7 +134,7 @@ func makePoint(def pointDef, raw int64) DriverPoint {
 }
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
-	values, err := modbusrtu.ReadRegisters(serialTransceive, devAddr, FUNC_CODE_READ_HOLDING, startReg, count, 1000, debug, 16, logf)
+	values, err := modbusrtu.ReadRegisters(serialTransceive, devAddr, FUNC_CODE_READ_HOLDING, startReg, count, 1000, debug, 16, tinydrv.Logf)
 	if err != nil {
 		return nil
 	}
@@ -167,18 +156,6 @@ func getConfig() DriverConfig {
 		Value:         tinydrv.ParseString(config, "value", ""),
 		Debug:         tinydrv.ParseBool(config, "debug", def.Debug),
 	}
-}
-
-func formatFloat(val float64, decimals int) string {
-	return strconv.FormatFloat(val, 'f', decimals, 64)
-}
-
-func outputJSON(v interface{}) {
-	tinydrv.OutputJSON(v)
-}
-
-func logf(format string, args ...interface{}) {
-	tinydrv.Logf(format, args...)
 }
 
 func main() {}

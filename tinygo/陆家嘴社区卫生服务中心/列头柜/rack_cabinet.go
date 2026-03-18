@@ -40,13 +40,7 @@ type DriverConfig struct {
 }
 
 type DriverPoint = tinydrv.Point
-
-type HandleResponse struct {
-	Success    bool          `json:"success"`
-	ProductKey string        `json:"productKey"`
-	Points     []DriverPoint `json:"points"`
-	Error      string        `json:"error,omitempty"`
-}
+type HandleResponse = tinydrv.HandleResponse
 
 type DescribeResponse = tinydrv.DescribeResponse
 type VersionData = tinydrv.VersionData
@@ -197,14 +191,14 @@ var switchPointSpecs = []switchPointSpec{
 func handle() int32 {
 	defer func() {
 		if r := recover(); r != nil {
-			outputJSON(ErrorResponse{Success: false, Error: "panic"})
+			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: "panic"})
 		}
 	}()
 
 	cfg := getConfig()
 	points := readAllPoints(cfg.DeviceAddress)
 
-	outputJSON(HandleResponse{
+	tinydrv.OutputJSON(HandleResponse{
 		Success:    true,
 		ProductKey: DriverProductKey,
 		Points:     points,
@@ -218,7 +212,7 @@ func handle() int32 {
 //
 //go:wasmexport describe
 func describe() int32 {
-	outputJSON(DescribeResponse{Success: true})
+	tinydrv.OutputJSON(DescribeResponse{Success: true})
 	return 0
 }
 
@@ -228,7 +222,7 @@ func describe() int32 {
 //
 //go:wasmexport version
 func version() int32 {
-	outputJSON(VersionResponse{
+	tinydrv.OutputJSON(VersionResponse{
 		Success: true,
 		Data: VersionData{
 			Version:    DriverVersion,
@@ -321,7 +315,7 @@ func makeSwitchPoint(spec switchPointSpec, raw uint16) DriverPoint {
 func makeNumericPoint(field string, value float64, decimals int, rw, unit, label string) DriverPoint {
 	return DriverPoint{
 		FieldName: field,
-		Value:     formatFloat(value, decimals),
+		Value:     tinydrv.FormatFloat(value, decimals),
 		RW:        rw,
 		Unit:      unit,
 		Label:     label,
@@ -363,14 +357,6 @@ func getConfig() DriverConfig {
 		FieldName:     tinydrv.ParseString(config, "field_name", ""),
 		Value:         tinydrv.ParseString(config, "value", ""),
 	}
-}
-
-func formatFloat(val float64, decimals int) string {
-	return strconv.FormatFloat(val, 'f', decimals, 64)
-}
-
-func outputJSON(v interface{}) {
-	tinydrv.OutputJSON(v)
 }
 
 func main() {}
