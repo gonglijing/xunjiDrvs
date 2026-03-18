@@ -36,6 +36,26 @@ func BuildReadRequest(addr byte, funcCode byte, startReg uint16, count uint16) [
 	return mbap
 }
 
+// BuildWriteSingleRequest 组装标准的 Modbus TCP 单寄存器写请求。
+//
+// 0x06 的请求/响应在 PDU 里都是 5 字节，因此整帧长度与读请求不同，但结构同样固定。
+func BuildWriteSingleRequest(addr byte, funcCode byte, reg uint16, value uint16) []byte {
+	mbap := make([]byte, 12)
+	mbap[0] = 0x00
+	mbap[1] = 0x01
+	mbap[2] = 0x00
+	mbap[3] = 0x00
+	mbap[4] = 0x00
+	mbap[5] = 0x06
+	mbap[6] = addr
+	mbap[7] = funcCode
+	mbap[8] = byte(reg >> 8)
+	mbap[9] = byte(reg)
+	mbap[10] = byte(value >> 8)
+	mbap[11] = byte(value)
+	return mbap
+}
+
 // ParseReadResponse 解析宿主返回的 Modbus TCP 响应。
 //
 // 这里默认调用方已经拿到一个完整的 TCP 响应帧，因此只做：
@@ -68,6 +88,27 @@ func ParseReadResponse(data []byte, addr byte, funcCode byte) ([]uint16, error) 
 	return values, nil
 }
 
+// ParseWriteSingleResponse 解析 Modbus TCP 单寄存器写响应。
+//
+// 该响应会回显从站地址、功能码、寄存器地址和值。
+// 这里保持和 RTU 版相同的返回形态，便于驱动层在串口/TCP 场景之间复用处理思路。
+func ParseWriteSingleResponse(data []byte, addr byte, funcCode byte) (uint16, uint16, error) {
+	if len(data) < 12 {
+		return 0, 0, errf("响应数据不完整")
+	}
+	pdu := data[6:]
+	if len(pdu) < 6 {
+		return 0, 0, errf("响应数据不完整")
+	}
+	if pdu[0] != addr || pdu[1] != funcCode {
+		return 0, 0, errf("响应地址或功能码不匹配")
+	}
+
+	reg := binary.BigEndian.Uint16(pdu[2:4])
+	value := binary.BigEndian.Uint16(pdu[4:6])
+	return reg, value, nil
+}
+
 // ReadRegisters 提供标准的 Modbus TCP 寄存器读取流程。
 //
 // 它与 RTU 版本的设计目标相同：把最常见的通信样板收敛到共享包，
@@ -97,4 +138,31 @@ func ReadRegisters(
 		return nil, errf("寄存器数量不足")
 	}
 	return values, nil
+}
+
+// WriteSingleRegister 提供标准的 Modbus TCP 单寄存器写流程。
+//
+// 由于写单寄存器本身也会返回完整回显帧，因此这里仍然通过 transceive 完成一次写后读。
+func WriteSingleRegister(
+	transceive TransceiveFunc,
+	addr byte,
+	funcCode byte,
+	reg uint16,
+	value uint16,
+	timeoutMs int,
+	respSize int,
+) (uint16, uint16, error) {
+	req := BuildWriteSingleRequest(addr, funcCode, reg, value)
+	resp := make([]byte, respSize)
+
+	n := transceive(req, resp, timeoutMs)
+	if n < 12 {
+		return 0, 0, errf("响应数据不完整")
+	}
+
+	writtenReg, writtenValue, err := ParseWriteSingleResponse(resp[:n], addr, funcCode)
+	if err != nil {
+		return 0, 0, err
+	}
+	return writtenReg, writtenValue, nil
 }

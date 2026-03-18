@@ -19,6 +19,10 @@
 package main
 
 import (
+	"math"
+	"strconv"
+	"strings"
+
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/hostio"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/modbusrtu"
 	"github.com/gonglijing/xunjiFsu/drvs/tinygo/pkg/tinydrv"
@@ -57,6 +61,15 @@ type VersionData = tinydrv.VersionData
 type VersionResponse = tinydrv.VersionResponse
 type ErrorResponse = tinydrv.ErrorResponse
 
+type writablePointSpec struct {
+	Field    string
+	Register uint16
+	Scale    float64
+	Decimals int
+	Unit     string
+	Label    string
+}
+
 // =============================================================================
 // 【用户修改】驱动版本
 // =============================================================================
@@ -82,8 +95,19 @@ const (
 
 	REG_ADD = 94
 
-	FUNC_CODE_READ = 0x03
+	FUNC_CODE_READ         = 0x03
+	FUNC_CODE_WRITE_SINGLE = 0x06
 )
+
+var writablePointSpecs = []writablePointSpec{
+	// 这些点本身就是设备参数项，现场通常会通过网关远程调整。
+	{Field: "TEMSET", Register: REG_TEMSET, Scale: 0.1, Decimals: 1, Unit: "℃", Label: "温度设点"},
+	{Field: "HUMSET", Register: REG_HUMSET, Scale: 0.1, Decimals: 1, Unit: "%", Label: "湿度设点"},
+	{Field: "IHTAV", Register: REG_IHTAV, Scale: 0.1, Decimals: 1, Unit: "℃", Label: "室内高温报警值"},
+	{Field: "ILTAV", Register: REG_ILTAV, Scale: 0.1, Decimals: 1, Unit: "℃", Label: "室内低温报警值"},
+	{Field: "HHAV", Register: REG_HHAV, Scale: 0.1, Decimals: 1, Unit: "%", Label: "高湿度报警值"},
+	{Field: "LHAV", Register: REG_LHAV, Scale: 0.1, Decimals: 1, Unit: "%", Label: "低湿度报警值"},
+}
 
 // =============================================================================
 // 【固定不变】驱动入口
@@ -98,6 +122,20 @@ func handle() int32 {
 	}()
 
 	cfg := getConfig()
+	if isWriteFunc(cfg.FuncName) {
+		point, err := writePoint(cfg.DeviceAddress, cfg.FieldName, cfg.Value, cfg.Debug)
+		if err != nil {
+			tinydrv.OutputJSON(ErrorResponse{Success: false, Error: err.Error()})
+			return 0
+		}
+		tinydrv.OutputJSON(HandleResponse{
+			Success:    true,
+			ProductKey: DriverProductKey,
+			Points:     []DriverPoint{point},
+		})
+		return 0
+	}
+
 	points := readAllPoints(cfg.DeviceAddress, cfg.Debug)
 
 	tinydrv.OutputJSON(HandleResponse{
@@ -146,17 +184,19 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 		// 设定值段：
 		// 0~2 这一小段同时包含温度设点和湿度设点，中间保留了一个未使用寄存器，
 		// 所以这里按协议原始偏移直接取 values[0] 和 values[2]。
-		points = append(points, makePoint("TEMSET", int(values[0]), 0.1, 1, "R", "℃", "温度设点"))
-		points = append(points, makePoint("HUMSET", int(values[2]), 0.1, 1, "R", "%", "湿度设点"))
+		// 这两个点支持远程写入，因此这里显式标成 RW，供 fsu 侧识别为可写字段。
+		points = append(points, makePoint("TEMSET", int(values[0]), 0.1, 1, "RW", "℃", "温度设点"))
+		points = append(points, makePoint("HUMSET", int(values[2]), 0.1, 1, "RW", "%", "湿度设点"))
 	}
 
 	if values := readMultipleRegs(byte(devAddr), REG_IHTAV, 4, debug); values != nil {
 		// 报警阈值段：
 		// 这一段集中保存温湿度上下限，属于设备参数类点位，语义上应该和实时测量值分开。
-		points = append(points, makePoint("IHTAV", int(values[0]), 0.1, 1, "R", "℃", "室内高温报警值"))
-		points = append(points, makePoint("ILTAV", int(values[1]), 0.1, 1, "R", "℃", "室内低温报警值"))
-		points = append(points, makePoint("HHAV", int(values[2]), 0.1, 1, "R", "%", "高湿度报警值"))
-		points = append(points, makePoint("LHAV", int(values[3]), 0.1, 1, "R", "%", "低湿度报警值"))
+		// 这些阈值也属于可写参数，因此同样标记为 RW。
+		points = append(points, makePoint("IHTAV", int(values[0]), 0.1, 1, "RW", "℃", "室内高温报警值"))
+		points = append(points, makePoint("ILTAV", int(values[1]), 0.1, 1, "RW", "℃", "室内低温报警值"))
+		points = append(points, makePoint("HHAV", int(values[2]), 0.1, 1, "RW", "%", "高湿度报警值"))
+		points = append(points, makePoint("LHAV", int(values[3]), 0.1, 1, "RW", "%", "低湿度报警值"))
 	}
 
 	if values := readMultipleRegs(byte(devAddr), REG_TEM, 2, debug); values != nil {
@@ -175,6 +215,41 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	return points
 }
 
+func writePoint(devAddr int, fieldName string, value string, debug bool) (DriverPoint, error) {
+	spec, ok := findWritablePoint(fieldName)
+	if !ok {
+		return DriverPoint{}, modbusrtuErr("unsupported writable field")
+	}
+
+	rawValue, err := encodeWritableValue(spec, value)
+	if err != nil {
+		return DriverPoint{}, err
+	}
+
+	writtenReg, writtenValue, err := modbusrtu.WriteSingleRegister(
+		serialTransceive,
+		byte(devAddr),
+		FUNC_CODE_WRITE_SINGLE,
+		spec.Register,
+		rawValue,
+		1000,
+		debug,
+		24,
+		tinydrv.Logf,
+	)
+	if err != nil {
+		return DriverPoint{}, err
+	}
+	if writtenReg != spec.Register {
+		return DriverPoint{}, modbusrtuErr("write register mismatch")
+	}
+	if writtenValue != rawValue {
+		return DriverPoint{}, modbusrtuErr("write value mismatch")
+	}
+
+	return makePoint(spec.Field, int(writtenValue), spec.Scale, spec.Decimals, "RW", spec.Unit, spec.Label), nil
+}
+
 func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) DriverPoint {
 	// 这个辅助函数把“缩放 + 格式化 + 造点”固定下来，
 	// 让调用处只保留设备点位本身的语义。
@@ -191,6 +266,35 @@ func makePointValue(field string, value float64, decimals int, rw, unit, label s
 		Label:     label,
 	}
 }
+
+func isWriteFunc(funcName string) bool {
+	return strings.EqualFold(strings.TrimSpace(funcName), "write")
+}
+
+func findWritablePoint(fieldName string) (writablePointSpec, bool) {
+	for _, spec := range writablePointSpecs {
+		if strings.EqualFold(spec.Field, strings.TrimSpace(fieldName)) {
+			return spec, true
+		}
+	}
+	return writablePointSpec{}, false
+}
+
+func encodeWritableValue(spec writablePointSpec, value string) (uint16, error) {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		return 0, err
+	}
+	raw := math.Round(parsed / spec.Scale)
+	if raw < 0 || raw > 65535 {
+		return 0, modbusrtuErr("write value out of range")
+	}
+	return uint16(raw), nil
+}
+
+type modbusrtuErr string
+
+func (e modbusrtuErr) Error() string { return string(e) }
 
 // =============================================================================
 // 【固定不变】Modbus RTU 通信函数

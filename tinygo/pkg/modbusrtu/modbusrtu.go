@@ -41,6 +41,21 @@ func BuildReadFrame(addr byte, funcCode byte, start uint16, qty uint16) []byte {
 	return req
 }
 
+// BuildWriteSingleFrame 构造标准的 Modbus RTU 单寄存器写请求帧。
+//
+// 当前先下沉最常见的 0x06 写单寄存器场景。
+// 对大多数“远程开关、模式切换、设定值写入”类设备来说，这已经覆盖最常用的主动控制能力。
+func BuildWriteSingleFrame(addr byte, funcCode byte, reg uint16, value uint16) []byte {
+	req := make([]byte, 8)
+	req[0] = addr
+	req[1] = funcCode
+	req[2], req[3] = byte(reg>>8), byte(reg)
+	req[4], req[5] = byte(value>>8), byte(value)
+	crc := CRC16(req[:6])
+	req[6], req[7] = byte(crc), byte(crc>>8)
+	return req
+}
+
 // ParseReadResponse 解析一个 Modbus RTU 读响应。
 //
 // 这里把常见失败路径尽量区分开：
@@ -74,6 +89,32 @@ func ParseReadResponse(data []byte, addr byte, funcCode byte) ([]uint16, error) 
 		values[i] = uint16(data[3+i*2])<<8 | uint16(data[4+i*2])
 	}
 	return values, nil
+}
+
+// ParseWriteSingleResponse 解析 Modbus RTU 单寄存器写响应。
+//
+// 0x06 的正常响应会把“寄存器地址 + 写入值”原样回显回来，
+// 因此这里除了做基础帧校验外，还会把回显内容返回给调用方，方便上层做二次确认或日志记录。
+func ParseWriteSingleResponse(data []byte, addr byte, funcCode byte) (uint16, uint16, error) {
+	if len(data) < 8 || data[0] != addr {
+		return 0, 0, errf("invalid response")
+	}
+	if len(data) >= 3 && data[1] == (funcCode|0x80) {
+		return 0, 0, errf("modbus exception code=" + strconv.Itoa(int(data[2])))
+	}
+	if data[1] != funcCode {
+		return 0, 0, errf("unexpected function code")
+	}
+	if len(data) < 8 {
+		return 0, 0, errf("response too short")
+	}
+	if !CheckCRC(data[:8]) {
+		return 0, 0, errf("crc error")
+	}
+
+	reg := uint16(data[2])<<8 | uint16(data[3])
+	value := uint16(data[4])<<8 | uint16(data[5])
+	return reg, value, nil
 }
 
 // ReadRegisters 封装 TinyGo 驱动里最常见的一段 RTU 读流程。
@@ -127,6 +168,49 @@ func ReadRegisters(
 		return nil, err
 	}
 	return values, nil
+}
+
+// WriteSingleRegister 封装标准的 Modbus RTU 单寄存器写流程。
+//
+// 与 ReadRegisters 一样，这里只负责“标准协议往返”本身：
+// 1. 组装 0x06 请求帧
+// 2. 通过宿主收发
+// 3. 在 debug 模式下输出请求/响应预览
+// 4. 校验响应并返回回显的地址和值
+//
+// 是否允许写某个字段、字段值如何从业务值映射到寄存器值，应由具体驱动自己决定。
+func WriteSingleRegister(
+	transceive TransceiveFunc,
+	addr byte,
+	funcCode byte,
+	reg uint16,
+	value uint16,
+	timeoutMs int,
+	debug bool,
+	previewMax int,
+	logf LoggerFunc,
+) (uint16, uint16, error) {
+	req := BuildWriteSingleFrame(addr, funcCode, reg, value)
+	if debug && logf != nil {
+		logf("rtu write req fc=%02X % X", funcCode, req)
+	}
+
+	resp, n := transceive(req, 8, timeoutMs)
+	if debug && logf != nil {
+		logf("rtu write fc=%02X n=%d resp=%s", funcCode, n, tinydrv.HexPreview(resp, n, previewMax))
+	}
+	if n <= 0 {
+		return 0, 0, errf("write timeout")
+	}
+
+	writtenReg, writtenValue, err := ParseWriteSingleResponse(resp[:n], addr, funcCode)
+	if err != nil {
+		if debug && logf != nil {
+			logf("write parse err=%v", err)
+		}
+		return 0, 0, err
+	}
+	return writtenReg, writtenValue, nil
 }
 
 // CRC16 计算 Modbus RTU 使用的 CRC-16/Modbus 校验值。
