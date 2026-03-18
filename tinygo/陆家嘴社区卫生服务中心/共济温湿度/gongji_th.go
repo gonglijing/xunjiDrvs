@@ -24,10 +24,14 @@ import (
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// TinyGo 当前不能把 wasmimport 函数直接当作函数值传给共享 helper，
+// 因此这里保留一个极薄的本地包装层。
 func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
 
+// DriverConfig 描述网关注入给驱动的运行参数。
+// 这个驱动真正关心的是 device_address 与 debug，其余字段保留是为了与统一接口对齐。
 type DriverConfig struct {
 	DeviceAddress int    `json:"device_address"`
 	FuncName      string `json:"func_name"`
@@ -44,6 +48,8 @@ type VersionData = tinydrv.VersionData
 type VersionResponse = tinydrv.VersionResponse
 type ErrorResponse = tinydrv.ErrorResponse
 
+// pointDef 只描述“一个业务点如何从寄存器值换算出来”，
+// 不掺杂任何通信层细节。
 type pointDef struct {
 	Field    string
 	Scale    float64
@@ -112,6 +118,7 @@ func version() int32 {
 func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	points := make([]DriverPoint, 0, len(pointDefs))
 
+	// 这台设备的点位正好落在一段连续寄存器里，因此一次读完最容易理解，也最省通信次数。
 	values := readMultipleRegs(byte(devAddr), REG_TEMPERATURE, uint16(len(pointDefs)), debug)
 	if values == nil || len(values) < len(pointDefs) {
 		return points
@@ -125,6 +132,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 }
 
 func makePoint(def pointDef, raw int64) DriverPoint {
+	// 共济温湿度的三个点都遵循“寄存器原值 * 缩放系数”的简单模式。
 	v := float64(raw) * def.Scale
 	return DriverPoint{
 		FieldName: def.Field,
@@ -136,6 +144,7 @@ func makePoint(def pointDef, raw int64) DriverPoint {
 }
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
+	// 通信样板已经沉到 modbusrtu 包，这里只保留设备自己的功能码与调试策略。
 	values, err := modbusrtu.ReadRegisters(serialTransceive, devAddr, FUNC_CODE_READ_INPUT, startReg, count, 1000, debug, 16, tinydrv.Logf)
 	if err != nil {
 		return nil
@@ -148,6 +157,7 @@ func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
 }
 
 func getConfig() DriverConfig {
+	// 配置解析统一走 tinydrv，保证默认值和 trim 行为与其他驱动一致。
 	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
 	config := tinydrv.ParseConfigMap()
 

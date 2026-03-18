@@ -1,3 +1,8 @@
+// Package modbustcp 提供 TinyGo 驱动共享的 Modbus TCP 读协议工具。
+//
+// 与 RTU 版本相比，TCP 侧没有 CRC，但多了 MBAP 头。
+// 这里同样只抽取最稳定的重复部分，让驱动文件聚焦设备点位映射，
+// 而不是反复重写请求头拼接和响应拆包逻辑。
 package modbustcp
 
 import "encoding/binary"
@@ -10,6 +15,10 @@ func errf(s string) error { return simpleErr(s) }
 
 type TransceiveFunc func(req []byte, resp []byte, timeoutMs int) int
 
+// BuildReadRequest 组装标准的 Modbus TCP 读保持寄存器请求。
+//
+// 目前驱动里事务号固定为 0x0001，协议标识固定为 0x0000。
+// 这对当前“单次请求-单次响应”的简单驱动场景已经足够，也最容易读懂。
 func BuildReadRequest(addr byte, funcCode byte, startReg uint16, count uint16) []byte {
 	mbap := make([]byte, 12)
 	mbap[0] = 0x00
@@ -27,6 +36,13 @@ func BuildReadRequest(addr byte, funcCode byte, startReg uint16, count uint16) [
 	return mbap
 }
 
+// ParseReadResponse 解析宿主返回的 Modbus TCP 响应。
+//
+// 这里默认调用方已经拿到一个完整的 TCP 响应帧，因此只做：
+// - 基本长度检查
+// - 地址和功能码匹配检查
+// - 字节数检查
+// - 寄存器拆包
 func ParseReadResponse(data []byte, addr byte, funcCode byte) ([]uint16, error) {
 	if len(data) < 9 {
 		return nil, errf("响应数据不完整")
@@ -52,6 +68,10 @@ func ParseReadResponse(data []byte, addr byte, funcCode byte) ([]uint16, error) 
 	return values, nil
 }
 
+// ReadRegisters 提供标准的 Modbus TCP 寄存器读取流程。
+//
+// 它与 RTU 版本的设计目标相同：把最常见的通信样板收敛到共享包，
+// 同时把“重试策略”“设备特殊兼容逻辑”留给具体驱动自己处理。
 func ReadRegisters(
 	transceive TransceiveFunc,
 	addr byte,

@@ -1,3 +1,12 @@
+//! 一个偏“教学用途”的 Rust Extism 驱动模板。
+//!
+//! 这个 POC 的目标不是追求最少代码，而是把一个只读 Modbus RTU 驱动所需的关键环节
+//! 都完整铺开，方便后续把点表和协议替换成真实设备：
+//! - 解析网关输入
+//! - 构造 RTU 请求帧
+//! - 通过宿主提供的 serial_transceive 做一次串口往返
+//! - 解析寄存器响应
+//! - 按点表配置生成统一 points 输出
 use extism_pdk::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -10,6 +19,7 @@ const FUNC_CODE_READ_INPUT: u8 = 0x04;
 
 #[link(wasm_import_module = "extism:host/user")]
 extern "C" {
+    // 这个函数由宿主提供，插件本身只负责准备请求和接收响应。
     fn serial_transceive(
         write_ptr: u64,
         write_size: u64,
@@ -21,6 +31,8 @@ extern "C" {
 
 #[derive(Debug, Deserialize)]
 struct DriverInvocationInput {
+    // 模板里保留这些字段，主要是为了说明真实驱动在运行时能拿到哪些上下文。
+    // 具体业务是否使用，取决于设备和网关的对接方式。
     #[serde(default)]
     device_id: i64,
     #[serde(default)]
@@ -69,6 +81,7 @@ struct DescribeResponse {
 
 #[derive(Debug, Clone, Copy)]
 struct PointConfig {
+    // PointConfig 把“寄存器定义”和“点位元数据”绑在一起，方便直接按表生成输出。
     field: &'static str,
     address: u16,
     length: u16,
@@ -79,7 +92,7 @@ struct PointConfig {
     label: &'static str,
 }
 
-// 模板点表：按你的真实协议修改这块即可。
+// 模板点表：真实项目通常只需要替换这一块和下方的功能码/缩放逻辑。
 const POINT_CONFIGS: &[PointConfig] = &[
     PointConfig {
         field: "temperature",
@@ -115,6 +128,7 @@ const POINT_CONFIGS: &[PointConfig] = &[
 
 #[plugin_fn]
 pub fn handle(input: String) -> FnResult<String> {
+    // handle 是驱动的主入口：解析输入，读取设备，最后输出统一 JSON。
     let request: DriverInvocationInput = serde_json::from_str(&input)
         .map_err(|e| Error::msg(format!("invalid input json: {e}")))?;
 
@@ -141,6 +155,7 @@ pub fn handle(input: String) -> FnResult<String> {
 
 #[plugin_fn]
 pub fn describe() -> FnResult<String> {
+    // describe 主要告诉调用方这个模板需要哪些 config，以及它适合什么传输方式。
     let mut data = BTreeMap::new();
     data.insert("name".into(), DRIVER_NAME.into());
     data.insert("language".into(), "rust".into());
@@ -159,6 +174,7 @@ pub fn describe() -> FnResult<String> {
 
 #[plugin_fn]
 pub fn version() -> FnResult<String> {
+    // version 返回一个非常稳定的小结构，供网关做驱动识别和版本展示。
     let mut data = BTreeMap::new();
     data.insert("version".into(), DRIVER_VERSION.into());
     data.insert("productKey".into(), DRIVER_PRODUCT_KEY.into());
@@ -170,6 +186,7 @@ pub fn version() -> FnResult<String> {
 }
 
 fn try_handle(request: &DriverInvocationInput) -> Result<Vec<DriverPoint>, String> {
+    // 这里先做与设备无关的基本校验，再进入真正的寄存器读取流程。
     if request.resource_type.trim() != "serial" {
         return Err("modbus rtu 模板仅支持 serial 资源".into());
     }
@@ -195,6 +212,7 @@ fn try_handle(request: &DriverInvocationInput) -> Result<Vec<DriverPoint>, Strin
 }
 
 fn read_all_points(device_address: u8, timeout_ms: u64, debug: bool) -> Result<Vec<DriverPoint>, String> {
+    // 通过扫描点表自动计算连续读取区间，避免手工维护“起始地址 + 总长度”两份信息。
     let start_address = POINT_CONFIGS
         .iter()
         .map(|point| point.address)
@@ -219,6 +237,7 @@ fn read_all_points(device_address: u8, timeout_ms: u64, debug: bool) -> Result<V
     }
 
     let registers = parse_read_response(&response, device_address, FUNC_CODE_READ_INPUT)?;
+    // 拿到连续寄存器后，再按点表把每个位置翻译成业务输出。
     let mut points = Vec::with_capacity(POINT_CONFIGS.len());
     for point in POINT_CONFIGS {
         let offset = usize::from(point.address - start_address);
@@ -241,6 +260,7 @@ fn read_all_points(device_address: u8, timeout_ms: u64, debug: bool) -> Result<V
 }
 
 fn build_read_frame(device_address: u8, start_address: u16, quantity: u16) -> Vec<u8> {
+    // RTU 帧结构固定，因此直接按协议顺序依次写入即可。
     let mut frame = vec![
         device_address,
         FUNC_CODE_READ_INPUT,
@@ -256,6 +276,8 @@ fn build_read_frame(device_address: u8, start_address: u16, quantity: u16) -> Ve
 }
 
 fn parse_read_response(data: &[u8], device_address: u8, function_code: u8) -> Result<Vec<u16>, String> {
+    // 读取响应时优先区分“太短”“功能码异常”“CRC 错误”等情况，
+    // 这样后续排查串口参数或设备地址错误时更容易定位。
     if data.len() < 5 {
         return Err("response too short".into());
     }

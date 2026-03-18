@@ -26,10 +26,13 @@ import (
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// TinyGo 侧通过一个普通包装函数把宿主调用交给共享 helper。
 func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
 
+// 青鸟消防沿用统一驱动配置结构，其中 debug 尤其重要，
+// 因为这个设备的兼容处理较多，调试时需要观察回退路径。
 type DriverConfig struct {
 	DeviceAddress int    `json:"device_address"`
 	FuncName      string `json:"func_name"`
@@ -56,6 +59,8 @@ const (
 	FUNC_CODE_READ_INPUT   = 0x04
 )
 
+// PointConfig 对应一个最终输出点位。
+// 青鸟点位很多，但每个点的映射规则很简单：某个地址 -> 某个状态值。
 type PointConfig struct {
 	Field    string
 	Address  uint16
@@ -67,6 +72,8 @@ type PointConfig struct {
 }
 
 type RegisterRange struct {
+	// RegisterRange 描述一次“理想上的连续读取区间”。
+	// 如果整段读取失败，后面会再细分成更小的区间尝试。
 	Start uint16
 	Count uint16
 }
@@ -350,6 +357,7 @@ var pointConfig = []PointConfig{
 }
 
 var readRanges = []RegisterRange{
+	// 这些区间直接来自点表中的连续地址段，显式列出来比运行时推导更容易核对。
 	{Start: 257, Count: 50},
 	{Start: 307, Count: 50},
 	{Start: 357, Count: 50},
@@ -400,6 +408,8 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	points := make([]DriverPoint, 0, len(pointConfig))
 	valueByAddr := make(map[uint16]uint16, len(pointConfig))
 
+	// 先把能读到的寄存器全部收集到 address -> value 映射里，
+	// 再按点表顺序恢复业务点，这样通信层和点表层会更清晰地分开。
 	for _, rg := range readRanges {
 		readRangeAdaptive(byte(devAddr), rg.Start, rg.Count, debug, valueByAddr)
 	}
@@ -419,6 +429,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 }
 
 func makePoint(cfg PointConfig, raw uint16) DriverPoint {
+	// 青鸟点位当前没有复杂工程量换算，Scale 保持 1 主要是为了和其他驱动的点表结构统一。
 	return DriverPoint{
 		FieldName: cfg.Field,
 		Value:     tinydrv.FormatFloat(float64(raw)*cfg.Scale, cfg.Decimals),
@@ -429,6 +440,8 @@ func makePoint(cfg PointConfig, raw uint16) DriverPoint {
 }
 
 func readRangeAdaptive(devAddr byte, logicalStart uint16, count uint16, debug bool, out map[uint16]uint16) {
+	// 这台设备的兼容难点在于：某些地址段连续读会失败，但拆小后又能成功。
+	// 因此这里采用“先整段读，失败后递归二分”的保守策略。
 	if count == 0 {
 		return
 	}
@@ -442,6 +455,7 @@ func readRangeAdaptive(devAddr byte, logicalStart uint16, count uint16, debug bo
 	}
 
 	if count == 1 {
+		// 当已经拆到单寄存器仍不可读时，就说明这个地址应该被跳过。
 		if debug {
 			tinydrv.Logf("skip unreadable register=%d", logicalStart)
 		}
@@ -454,6 +468,8 @@ func readRangeAdaptive(devAddr byte, logicalStart uint16, count uint16, debug bo
 }
 
 func readMultipleRegsLogical(devAddr byte, logicalStart uint16, count uint16, debug bool) []uint16 {
+	// 先按文档里的逻辑地址读取；
+	// 如果失败，再回退到 0-based 地址尝试，以适配现场实现差异。
 	if values := readMultipleRegs(devAddr, logicalStart, count, debug); values != nil {
 		return values
 	}
@@ -470,6 +486,8 @@ func readMultipleRegsLogical(devAddr byte, logicalStart uint16, count uint16, de
 }
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
+	// 青鸟现场实现并不完全稳定，因此这里按 03 -> 04 的顺序做功能码回退。
+	// 同时把一次最大读取量限制在 50，避免落到设备不接受的大请求上。
 	if count > 50 {
 		count = 50
 	}
@@ -490,6 +508,7 @@ func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) [
 }
 
 func readMultipleRegsWithFunc(devAddr byte, startReg uint16, count uint16, funcCode byte, debug bool) ([]uint16, error) {
+	// 一旦确定了功能码，实际通信路径就退化成一段标准 RTU 读取流程。
 	return modbusrtu.ReadRegisters(serialTransceive, devAddr, funcCode, startReg, count, 1000, debug, 24, tinydrv.Logf)
 }
 

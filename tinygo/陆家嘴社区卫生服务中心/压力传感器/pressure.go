@@ -24,6 +24,7 @@ import (
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// 共享 helper 需要普通函数值，因此这里做一层本地包装。
 func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
@@ -80,6 +81,9 @@ var pointConfig = []PointConfig{
 
 // 点表配置结构
 type PointConfig struct {
+	// Address/Length 决定去哪读；
+	// Scale/Decimals/RW/Unit/Label 决定读出来后如何解释与展示。
+	// 这样点表本身就能完整表达业务含义。
 	Field    string  // 字段名
 	Address  uint16  // 寄存器地址
 	Length   uint16  // 寄存器数量
@@ -154,6 +158,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	}
 
 	// 计算需要读取的寄存器总数和起始地址
+	// 通过扫描点表动态得到连续读取区间，避免后续扩点时再手工同步总长度。
 	startAddr := pointConfig[0].Address
 	maxEndAddr := uint16(0)
 	for _, p := range pointConfig {
@@ -174,6 +179,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	}
 
 	// 将读取的值按点表配置转换为实际值
+	// 拿到连续寄存器后，再按点表逐个恢复业务点。
 	for _, cfg := range pointConfig {
 		offset := cfg.Address - startAddr
 		if offset < 0 || int(offset) >= len(values) {
@@ -211,6 +217,7 @@ func serialTransceive(req []byte, respLen int, timeoutMs int) ([]byte, int) {
 
 // 获取配置 (通用)
 func getConfig() DriverConfig {
+	// 压力传感器线上默认只需要最保守的配置：地址 1、debug 关闭。
 	def := DriverConfig{DeviceAddress: 1, FuncName: "read"}
 	config := tinydrv.ParseConfigMap()
 

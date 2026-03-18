@@ -1,3 +1,10 @@
+//! Rust 版的共济温湿度驱动示例。
+//!
+//! 相比 rust_extism_demo，这个文件更接近一个“真实设备驱动”的最小实现：
+//! - 输入只保留真正使用到的 config
+//! - 点表固定且简单
+//! - 读流程直接围绕 3 个寄存器展开
+//! 它适合作为 Rust 驱动风格和输出约定的基线参考。
 use extism_pdk::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -10,6 +17,7 @@ const FUNC_CODE_READ_INPUT: u8 = 0x04;
 
 #[link(wasm_import_module = "extism:host/user")]
 extern "C" {
+    // 由宿主实现的串口往返调用。插件本身不直接持有串口。
     fn serial_transceive(
         write_ptr: u64,
         write_size: u64,
@@ -59,6 +67,7 @@ struct VersionResponse {
 
 #[derive(Debug, Clone, Copy)]
 struct PointConfig {
+    // 每个点只关心地址、缩放方式和输出展示信息。
     field: &'static str,
     address: u16,
     scale: f64,
@@ -68,6 +77,7 @@ struct PointConfig {
     label: &'static str,
 }
 
+// 共济温湿度设备的点表很短，因此直接写成常量数组最直观。
 const POINTS: &[PointConfig] = &[
     PointConfig {
         field: "temperature",
@@ -100,6 +110,7 @@ const POINTS: &[PointConfig] = &[
 
 #[plugin_fn]
 pub fn handle(input: String) -> FnResult<String> {
+    // 入口函数的职责非常单一：反序列化输入，读取点位，回包。
     let request: DriverInvocationInput = serde_json::from_str(&input)
         .map_err(|e| Error::msg(format!("invalid input json: {e}")))?;
 
@@ -126,6 +137,7 @@ pub fn handle(input: String) -> FnResult<String> {
 
 #[plugin_fn]
 pub fn describe() -> FnResult<String> {
+    // 当前驱动没有可写字段，因此 describe 只返回一个空 data。
     let data = BTreeMap::new();
     Ok(
         serde_json::to_string(&DescribeResponse { success: true, data })
@@ -135,6 +147,7 @@ pub fn describe() -> FnResult<String> {
 
 #[plugin_fn]
 pub fn version() -> FnResult<String> {
+    // version 供网关识别驱动版本和 productKey。
     let mut data = BTreeMap::new();
     data.insert("version".into(), DRIVER_VERSION.into());
     data.insert("productKey".into(), DRIVER_PRODUCT_KEY.into());
@@ -146,6 +159,7 @@ pub fn version() -> FnResult<String> {
 }
 
 fn read_points(config: &BTreeMap<String, String>) -> Result<Vec<DriverPoint>, String> {
+    // 这个设备寄存器非常规整，因此直接固定读取 0~2 共 3 个寄存器。
     let device_address = parse_u8_config(config.get("device_address"), DEFAULT_DEVICE_ADDRESS);
     let timeout_ms = parse_u64_config(config.get("timeout_ms"), DEFAULT_TIMEOUT_MS);
     let debug = parse_bool_config(config.get("debug"));
@@ -165,6 +179,7 @@ fn read_points(config: &BTreeMap<String, String>) -> Result<Vec<DriverPoint>, St
         return Ok(Vec::new());
     }
 
+    // 再按点表顺序把寄存器翻译成最终业务点。
     let mut points = Vec::with_capacity(POINTS.len());
     for point in POINTS {
         let raw = values[usize::from(point.address)];
@@ -182,6 +197,7 @@ fn read_points(config: &BTreeMap<String, String>) -> Result<Vec<DriverPoint>, St
 }
 
 fn serial_roundtrip(request: &[u8], response_len: usize, timeout_ms: u64) -> Result<Vec<u8>, String> {
+    // 这里把一次宿主调用收敛成单独函数，目的是让主流程更像“协议代码”而不是“宿主适配代码”。
     let mut response = vec![0u8; response_len];
     let n = unsafe {
         serial_transceive(
@@ -204,6 +220,7 @@ fn serial_roundtrip(request: &[u8], response_len: usize, timeout_ms: u64) -> Res
 }
 
 fn build_read_frame(device_address: u8, start: u16, count: u16) -> Vec<u8> {
+    // 组装标准 RTU 读输入寄存器请求帧。
     let mut frame = vec![
         device_address,
         FUNC_CODE_READ_INPUT,
@@ -219,6 +236,7 @@ fn build_read_frame(device_address: u8, start: u16, count: u16) -> Vec<u8> {
 }
 
 fn parse_read_response(response: &[u8], device_address: u8) -> Result<Vec<u16>, String> {
+    // 这里保留最必要的协议校验：地址、功能码、字节数和 CRC。
     if response.len() < 5 {
         return Err("invalid response".into());
     }

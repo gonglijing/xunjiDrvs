@@ -33,6 +33,7 @@ import (
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// 本地包装层只负责把 wasmimport 暴露为普通函数值。
 func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
@@ -56,6 +57,8 @@ type VersionData = tinydrv.VersionData
 type VersionResponse = tinydrv.VersionResponse
 type ErrorResponse = tinydrv.ErrorResponse
 
+// indexedPointMeta 用于描述“第 N 个电池点位最终应该长什么样”，
+// 这样批量点位就不需要手写 40 组几乎相同的结构。
 type indexedPointMeta struct {
 	Field    string
 	Label    string
@@ -150,7 +153,7 @@ func version() int32 {
 func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	points := make([]DriverPoint, 0, 123)
 
-	// 组级参数: TU(2寄存器), TI(2寄存器), T(1寄存器)
+	// 组级参数和单体参数按协议文档分块读取，结构更接近现场点表。
 	if values := readMultipleRegs(byte(devAddr), REG_GROUP_START, REG_GROUP_LEN, debug); values != nil && len(values) >= 5 {
 		tuRaw := combineTwoRegs(values[0], values[1])
 		tiRaw := combineTwoRegs(values[2], values[3])
@@ -196,6 +199,7 @@ func makePointValue(field string, value float64, decimals int, rw, unit, label s
 }
 
 func combineTwoRegs(high uint16, low uint16) int64 {
+	// 组电压、组电流属于 32 位值，这里按“高寄存器在前”的常见 Modbus 方式组合。
 	v := (uint32(high) << 16) | uint32(low)
 	return int64(int32(v))
 }
@@ -206,6 +210,7 @@ func appendIndexedPoints(
 	metas []indexedPointMeta,
 	transform func(uint16) float64,
 ) []DriverPoint {
+	// 统一的批量造点逻辑，让调用方只描述“如何把单个寄存器转成数值”。
 	for index, meta := range metas {
 		points = append(points, makePointValue(
 			meta.Field,
@@ -220,6 +225,7 @@ func appendIndexedPoints(
 }
 
 func buildIndexedPointMetas(prefix string, labelPrefix string, labelSuffix string, count int, decimals int, rw string, unit string) []indexedPointMeta {
+	// 元数据在初始化时一次性生成，可避免运行时反复拼字段名和标签。
 	metas := make([]indexedPointMeta, 0, count)
 	for i := 1; i <= count; i++ {
 		indexText := strconv.Itoa(i)
@@ -235,6 +241,7 @@ func buildIndexedPointMetas(prefix string, labelPrefix string, labelSuffix strin
 }
 
 func twoDigit(n int) string {
+	// 现场命名要求固定宽度，例如 U01/T03/IR40。
 	if n < 10 {
 		return "0" + strconv.Itoa(n)
 	}
@@ -246,6 +253,7 @@ func twoDigit(n int) string {
 // =============================================================================
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
+	// 高特网关所有批量点位都走 0x04 读输入寄存器，因此这里保持统一入口。
 	values, err := modbusrtu.ReadRegisters(serialTransceive, devAddr, FUNC_CODE_READ_INPUT, startReg, count, 1000, debug, 24, tinydrv.Logf)
 	if err != nil {
 		return nil

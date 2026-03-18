@@ -26,6 +26,7 @@ import (
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// 本地包装层用于把宿主调用传入 hostio/modbusrtu 等共享 helper。
 func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
@@ -80,6 +81,8 @@ var pointConfig = []PointConfig{
 
 // 点表配置结构
 type PointConfig struct {
+	// 液位传感器既有 2 寄存器的液位值，也有 1 寄存器的温度值，
+	// 因此 Length 是点表里不可缺少的一列。
 	Field    string // 字段名
 	Address  uint16 // 寄存器地址
 	Length   uint16 // 寄存器数量
@@ -149,6 +152,8 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 		return points
 	}
 
+	// 和压力传感器一样，这里根据点表自动推导出连续读取区间，
+	// 减少“点表”和“通信区间”两份配置之间漂移的风险。
 	startAddr := pointConfig[0].Address
 	maxEndAddr := uint16(0)
 	for _, p := range pointConfig {
@@ -167,6 +172,7 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 		return points
 	}
 
+	// 先按寄存器长度还原原始整数，再套用字段对应的工程量公式。
 	for _, cfg := range pointConfig {
 		offset := int(cfg.Address - startAddr)
 		if offset < 0 || offset+int(cfg.Length) > len(values) {
@@ -189,6 +195,8 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 }
 
 func combineRegisters(words []uint16) int64 {
+	// 多寄存器值按高位在前拼接；当前设备只用到 1 或 2 个寄存器，
+	// 但保留更一般化实现后，后续扩点时不用再改这里。
 	if len(words) == 0 {
 		return 0
 	}
@@ -204,6 +212,7 @@ func combineRegisters(words []uint16) int64 {
 }
 
 func applyExpression(field string, raw int64) float64 {
+	// 协议里的换算公式显式写在这里，比把魔法数字分散在点表或调用点里更好读。
 	v := float64(raw)
 	switch field {
 	case "level":

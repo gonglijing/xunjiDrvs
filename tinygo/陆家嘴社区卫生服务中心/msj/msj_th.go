@@ -24,10 +24,12 @@ import (
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// 与其他 TinyGo 驱动一致，这里通过本地包装层把宿主调用传给共享 helper。
 func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
 
+// msj 驱动沿用统一配置结构，其中 debug 默认开启，方便现场联调时直接看到请求/响应。
 type DriverConfig struct {
 	DeviceAddress int    `json:"device_address"`
 	FuncName      string `json:"func_name"`
@@ -44,6 +46,7 @@ type VersionData = tinydrv.VersionData
 type VersionResponse = tinydrv.VersionResponse
 type ErrorResponse = tinydrv.ErrorResponse
 
+// 这个驱动的点位模型与共济温湿度几乎一致，都是少量连续寄存器 + 简单缩放。
 type pointDef struct {
 	Field    string
 	Scale    float64
@@ -110,6 +113,7 @@ func version() int32 {
 func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	points := make([]DriverPoint, 0, len(pointDefs))
 
+	// 设备点位少而连续，因此保持最直接的“读一段 -> 按表造点”流程。
 	values := readMultipleRegs(byte(devAddr), REG_TEMPERATURE, uint16(len(pointDefs)), debug)
 	if values == nil || len(values) < len(pointDefs) {
 		return points
@@ -134,6 +138,7 @@ func makePoint(def pointDef, raw int64) DriverPoint {
 }
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []uint16 {
+	// 与共济温湿度不同，这台设备使用 0x03 读保持寄存器。
 	values, err := modbusrtu.ReadRegisters(serialTransceive, devAddr, FUNC_CODE_READ_HOLDING, startReg, count, 1000, debug, 16, tinydrv.Logf)
 	if err != nil {
 		return nil

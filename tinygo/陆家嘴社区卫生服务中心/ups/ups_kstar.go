@@ -35,6 +35,7 @@ import (
 //go:wasmimport extism:host/user tcp_transceive
 func tcp_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// 本地包装层用于把宿主 TCP 调用传给共享 helper。
 func callTCPTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return tcp_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
@@ -143,6 +144,8 @@ func version() int32 {
 func readAllUPS(devAddr int) []DriverPoint {
 	points := make([]DriverPoint, 0, 13)
 
+	// UPS 点位自然分成输出侧、输入侧、电池侧三个小区块。
+	// 按块读取能让代码结构与协议说明一一对应。
 	if values := readMultipleRegs(byte(devAddr), REG_OUTPUT_FREQUENCY, 7); values != nil {
 		points = append(points, makePoint("OUR", int(values[1]), 0.1, 1, "R", "V", "R相输出电压"))
 		points = append(points, makePoint("OUS", int(values[2]), 0.1, 1, "R", "V", "S相输出电压"))
@@ -169,6 +172,7 @@ func readAllUPS(devAddr int) []DriverPoint {
 }
 
 func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) DriverPoint {
+	// 统一处理缩放和格式化，让调用处保留纯粹的点位定义。
 	realVal := float64(rawVal) * scale
 	return DriverPoint{
 		FieldName: field,
@@ -184,6 +188,8 @@ func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, 
 // =============================================================================
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16) []int16 {
+	// 公共 TCP helper 返回 []uint16，这里再转成 int16，
+	// 保持驱动层看到的仍是“一个寄存器一个数值”的简单模型。
 	values, err := modbustcp.ReadRegisters(tcpTransceive, devAddr, FUNC_CODE_READ, startReg, count, 1000, 64)
 	if err != nil {
 		return nil

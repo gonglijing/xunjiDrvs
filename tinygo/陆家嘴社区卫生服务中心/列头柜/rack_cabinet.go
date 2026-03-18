@@ -25,6 +25,7 @@ import (
 //go:wasmimport extism:host/user tcp_transceive
 func tcp_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// 把 wasmimport 包装成普通函数，便于传给共享 TCP helper。
 func callTCPTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return tcp_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
@@ -47,6 +48,7 @@ type VersionData = tinydrv.VersionData
 type VersionResponse = tinydrv.VersionResponse
 type ErrorResponse = tinydrv.ErrorResponse
 
+// blockPointSpec 用于描述“连续寄存器块里某个偏移位置对应一个普通数值点”。
 type blockPointSpec struct {
 	Index    int
 	Field    string
@@ -58,6 +60,7 @@ type blockPointSpec struct {
 }
 
 type energyPointSpec struct {
+	// 电能点位跨两个寄存器，且在块内的位置并不全是简单顺序，因此保留真实寄存器地址。
 	Register uint16
 	Field    string
 	Scale    float64
@@ -68,6 +71,7 @@ type energyPointSpec struct {
 }
 
 type switchPointSpec struct {
+	// 开关点的特殊之处在于最终关心的是某个状态位，而不是整个寄存器的工程量。
 	Index int
 	Field string
 	Label string
@@ -239,6 +243,7 @@ func readAllPoints(devAddr int) []DriverPoint {
 	points := make([]DriverPoint, 0, 67)
 	addr := byte(devAddr)
 
+	// 按电压、电流、功率、电能、开关五类组织输出，方便维护时按业务类别定位问题。
 	points = appendBlockPoints(points, addr, REG_VOLTAGE_START, REG_VOLTAGE_LEN, voltagePointSpecs)
 	points = appendBlockPoints(points, addr, REG_CURRENT_START, REG_CURRENT_LEN, currentPointSpecs)
 	points = appendBlockPoints(points, addr, REG_POWER_START, REG_POWER_LEN, powerPointSpecs)
@@ -249,6 +254,7 @@ func readAllPoints(devAddr int) []DriverPoint {
 }
 
 func appendBlockPoints(points []DriverPoint, devAddr byte, startReg uint16, count uint16, specs []blockPointSpec) []DriverPoint {
+	// 普通数值点的读取和映射规律稳定，因此统一通过这层模板化处理。
 	values := readMultipleRegs(devAddr, startReg, count)
 	if values == nil {
 		return points
@@ -264,6 +270,7 @@ func appendBlockPoints(points []DriverPoint, devAddr byte, startReg uint16, coun
 }
 
 func appendEnergyPoints(points []DriverPoint, devAddr byte) []DriverPoint {
+	// 电能点位共享一段寄存器，但每个点都跨 2 个寄存器，需要单独解码。
 	values := readMultipleRegs(devAddr, REG_ENERGY_START, REG_ENERGY_LEN)
 	if values == nil {
 		return points
@@ -280,6 +287,7 @@ func appendEnergyPoints(points []DriverPoint, devAddr byte) []DriverPoint {
 }
 
 func appendSwitchPoints(points []DriverPoint, devAddr byte) []DriverPoint {
+	// 开关状态与普通工程量点不同，因此单独保留一条清晰的处理路径。
 	values := readMultipleRegs(devAddr, REG_SWITCH_START, REG_SWITCH_LEN)
 	if values == nil {
 		return points
@@ -303,6 +311,7 @@ func makeEnergyPoint(spec energyPointSpec, raw uint32) DriverPoint {
 }
 
 func makeSwitchPoint(spec switchPointSpec, raw uint16) DriverPoint {
+	// 当前协议只使用最高位表示开关状态，因此这里做一次显式掩码。
 	return DriverPoint{
 		FieldName: spec.Field,
 		Value:     strconv.Itoa(int(raw & switchMask)),
@@ -323,6 +332,8 @@ func makeNumericPoint(field string, value float64, decimals int, rw, unit, label
 }
 
 func readU32(values []uint16, startReg uint16, targetReg uint16) (uint32, bool) {
+	// 通过“真实寄存器地址 -> 当前切片偏移”的换算，
+	// 调用方可以继续用协议文档里的地址思考，而不是被数组下标绑住。
 	idx := int(targetReg - startReg)
 	if idx < 0 || idx+1 >= len(values) {
 		return 0, false
@@ -334,6 +345,7 @@ func readU32(values []uint16, startReg uint16, targetReg uint16) (uint32, bool) 
 // 【固定不变】Modbus TCP 通信函数
 // =============================================================================
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16) []uint16 {
+	// 列头柜走标准 Modbus TCP 03 读保持寄存器，无需额外兼容分支。
 	values, err := modbustcp.ReadRegisters(tcpTransceive, devAddr, FUNC_CODE_READ, startReg, count, 1000, 256)
 	if err != nil {
 		return nil

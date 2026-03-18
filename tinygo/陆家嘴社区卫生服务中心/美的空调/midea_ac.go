@@ -31,6 +31,7 @@ import (
 //go:wasmimport extism:host/user serial_transceive
 func serial_transceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64
 
+// 宿主函数需要通过一层普通 Go 函数包装后，才能传给共享 helper。
 func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, timeoutMs uint64) uint64 {
 	return serial_transceive(wPtr, wSize, rPtr, rCap, timeoutMs)
 }
@@ -39,6 +40,8 @@ func callSerialTransceive(wPtr uint64, wSize uint64, rPtr uint64, rCap uint64, t
 // 【固定不变】配置结构（网关传入）
 // =============================================================================
 type DriverConfig struct {
+	// 只读驱动虽然不会用到 write 相关字段，但仍保留完整结构，
+	// 这样所有驱动在网关侧都能复用同一套输入约定。
 	DeviceAddress int    `json:"device_address"`
 	FuncName      string `json:"func_name"`
 	FieldName     string `json:"field_name"`
@@ -137,6 +140,8 @@ func version() int32 {
 func readAllPoints(devAddr int, debug bool) []DriverPoint {
 	points := make([]DriverPoint, 0, 9)
 
+	// 空调协议的寄存器天然分成几个离散区块。
+	// 与其把所有地址拼成一个大区间读取，不如按文档分段读取，更容易核对和维护。
 	if values := readMultipleRegs(byte(devAddr), REG_TEMSET, 3, debug); values != nil {
 		points = append(points, makePoint("TEMSET", int(values[0]), 0.1, 1, "R", "℃", "温度设点"))
 		points = append(points, makePoint("HUMSET", int(values[2]), 0.1, 1, "R", "%", "湿度设点"))
@@ -162,6 +167,8 @@ func readAllPoints(devAddr int, debug bool) []DriverPoint {
 }
 
 func makePoint(field string, rawVal int, scale float64, decimals int, rw, unit, label string) DriverPoint {
+	// 这个辅助函数把“缩放 + 格式化 + 造点”固定下来，
+	// 让调用处只保留设备点位本身的语义。
 	realVal := float64(rawVal) * scale
 	return makePointValue(field, realVal, decimals, rw, unit, label)
 }
@@ -181,6 +188,7 @@ func makePointValue(field string, value float64, decimals int, rw, unit, label s
 // =============================================================================
 
 func readSingleReg(devAddr byte, regAddr uint16, debug bool) int {
+	// 单寄存器读取只是多寄存器读取的退化情况，因此直接复用后者。
 	values := readMultipleRegs(devAddr, regAddr, 1, debug)
 	if values == nil || len(values) < 1 {
 		return -1
@@ -189,6 +197,8 @@ func readSingleReg(devAddr byte, regAddr uint16, debug bool) int {
 }
 
 func readMultipleRegs(devAddr byte, startReg uint16, count uint16, debug bool) []int16 {
+	// 通信 helper 返回的是 []uint16，这里再转成 []int16，
+	// 便于设备层在需要时按有符号值继续处理。
 	values, err := modbusrtu.ReadRegisters(serialTransceive, devAddr, FUNC_CODE_READ, startReg, count, 1000, debug, 24, tinydrv.Logf)
 	if err != nil {
 		return nil
